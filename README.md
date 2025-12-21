@@ -71,3 +71,9 @@ export default defineConfig([
   },
 ])
 ```
+
+Wenn du lokal weiterentwickelst:
+
+.env ist gesetzt → npm run dev
+Browser auf http://localhost:5173 (oder den Port, den Vite loggt)
+Nach Änderungen erneut npm run build + firebase deploy für die Live-Site
