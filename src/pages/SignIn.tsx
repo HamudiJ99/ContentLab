@@ -11,6 +11,7 @@ import {
   Tabs,
   TextField,
   Typography,
+  useTheme,
 } from '@mui/material';
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
 import { FirebaseError } from 'firebase/app';
@@ -41,16 +42,11 @@ export default function SignIn() {
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
   const navigate = useNavigate();
-
+  const theme = useTheme();
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError('');
     setInfo('');
-
-    if (!email.trim() || !password.trim()) {
-      setError('Bitte E-Mail und Passwort eingeben.');
-      return;
-    }
 
     setLoading(true);
     try {
@@ -92,26 +88,54 @@ export default function SignIn() {
         display: 'flex',
         justifyContent: 'center',
         alignItems: 'center',
-        background: 'linear-gradient(135deg, #e3f2fd 0%, #fce4ec 100%)',
+        backgroundColor: theme.palette.background.default,
         p: 2,
+        transition: 'background-color 0.3s ease',
       }}
     >
-      <Paper elevation={3} sx={{ maxWidth: 420, width: '100%', p: 4 }}>
-        <Typography variant="h4" fontWeight={700} mb={1}>
-          ContentLab
-        </Typography>
-        <Typography variant="body1" color="text.secondary" mb={3}>
-          Melde dich an, um deine Kurse und Inhalte zu verwalten.
-        </Typography>
+      <Paper
+        elevation={theme.palette.mode === 'light' ? 4 : 0}
+        sx={{
+          maxWidth: 440,
+          width: '100%',
+          p: { xs: 3, sm: 4 },
+          borderRadius: 4,
+          border:
+            theme.palette.mode === 'dark'
+              ? '1px solid rgba(148, 163, 184, 0.2)'
+              : '1px solid rgba(15, 23, 42, 0.08)',
+          backgroundColor: theme.palette.background.paper,
+          boxShadow:
+            theme.palette.mode === 'dark'
+              ? '0 25px 60px rgba(2, 6, 23, 0.65)'
+              : '0 25px 60px rgba(15, 23, 42, 0.15)',
+        }}
+      >
+        <Box mb={3}>
+          <Typography variant="h4" fontWeight={700} gutterBottom>
+            ContentLab
+          </Typography>
+          <Typography variant="body1" color="text.secondary">
+            Melde dich an, um deine Workflows, Kurse und Bibliotheken zu verwalten.
+          </Typography>
+        </Box>
 
         <Tabs
           value={mode}
           onChange={(_, value) => setMode(value)}
           variant="fullWidth"
-          sx={{ mb: 3 }}
+          sx={{
+            mb: 3,
+            borderRadius: 2,
+            '& .MuiTabs-indicator': {
+              height: 3,
+              borderRadius: 3,
+              backgroundColor: theme.palette.primary.main,
+            },
+          }}
         >
-          <Tab label="Login" value="login" />
-          <Tab label="Registrieren" value="register" />
+          <Tab label="Login" value="login" sx={{ fontWeight: 600 }} />
+          <Tab label="Registrieren" value="register" sx={{ fontWeight: 600 }} />
         </Tabs>
 
         <Box component="form" onSubmit={handleSubmit} noValidate>
@@ -150,16 +174,22 @@ export default function SignIn() {
             variant="contained"
             fullWidth
             size="large"
-            sx={{ mt: 3 }}
+            sx={{ mt: 3, py: 1.25 }}
             disabled={loading}
           >
-            {mode === 'login' ? 'Login' : 'Konto erstellen'}
+            {loading ? 'Wird gesendet…' : mode === 'login' ? 'Login' : 'Konto erstellen'}
           </Button>
         </Box>
 
         {mode === 'login' && (
           <Box sx={{ mt: 2, textAlign: 'center' }}>
-            <Link component="button" type="button" variant="body2" onClick={handlePasswordReset}>
+            <Link
+              component="button"
+              type="button"
+              variant="body2"
+              onClick={handlePasswordReset}
+              sx={{ color: theme.palette.primary.main, fontWeight: 600 }}
+            >
               Passwort vergessen?
             </Link>
           </Box>
