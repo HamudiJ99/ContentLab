@@ -22,9 +22,9 @@ const firebaseConfig: FirebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
+export const db = getFirestore(app, 'default'); // exakt dieser Name aus der Console
 
 export const auth = getAuth(app);
-export const db = getFirestore(app);
 export const storage = getStorage(app);
 
 export default app;
