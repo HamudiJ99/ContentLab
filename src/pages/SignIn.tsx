@@ -16,6 +16,7 @@ import {
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
 import { FirebaseError } from 'firebase/app';
 import { auth } from '../firebase/firebaseConfig';
+import Footer from '../components/Footer';
 
 type AuthMode = 'login' | 'register';
 
@@ -82,18 +83,18 @@ export default function SignIn() {
   };
 
   return (
-    <Box
-      sx={{
-        minHeight: '100vh',
-        display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'center',
-        backgroundColor: theme.palette.background.default,
-        p: 2,
-        transition: 'background-color 0.3s ease',
-      }}
-    >
-      <Paper
+    <Box sx={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: theme.palette.background.default }}>
+      <Box
+        sx={{
+          flex: 1,
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          p: 2,
+          transition: 'background-color 0.3s ease',
+        }}
+      >
+        <Paper
         elevation={theme.palette.mode === 'light' ? 4 : 0}
         sx={{
           maxWidth: 440,
@@ -195,6 +196,8 @@ export default function SignIn() {
           </Box>
         )}
       </Paper>
+      </Box>
+      <Footer />
     </Box>
   );
 }
