@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { MouseEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -17,16 +17,50 @@ import PersonOutlineIcon from '@mui/icons-material/PersonOutline';
 import DarkModeIcon from '@mui/icons-material/DarkMode';
 import LightModeIcon from '@mui/icons-material/LightMode';
 import LogoutIcon from '@mui/icons-material/Logout';
-import { signOut } from 'firebase/auth';
-import { auth } from '../firebase/firebaseConfig';
+import { signOut, onAuthStateChanged, type User } from 'firebase/auth';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { auth, db } from '../firebase/firebaseConfig';
 import { useColorMode } from '../context/ColorModeContext';
+
+const buildAvatarSrc = (url?: string, version?: number) => {
+  if (!url) {
+    return undefined;
+  }
+  if (!version) {
+    return url;
+  }
+  const separator = url.includes('?') ? '&' : '?';
+  return `${url}${separator}v=${version}`;
+};
 
 export default function Header() {
   const navigate = useNavigate();
   const { mode, toggleColorMode } = useColorMode();
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
+  const [authUser, setAuthUser] = useState<User | null>(auth.currentUser);
+  const [profileData, setProfileData] = useState<{ avatarUrl?: string; displayName?: string; avatarVersion?: number }>({});
   const menuOpen = Boolean(anchorEl);
   const isDarkMode = mode === 'dark';
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setAuthUser(user);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!authUser) {
+      setProfileData({});
+      return;
+    }
+
+    const unsubscribe = onSnapshot(doc(db, 'users', authUser.uid), (snapshot) => {
+      setProfileData((snapshot.data() as { avatarUrl?: string; displayName?: string; avatarVersion?: number }) ?? {});
+    });
+
+    return () => unsubscribe();
+  }, [authUser]);
 
   const handleMenuOpen = (event: MouseEvent<HTMLElement>) => {
     setAnchorEl(event.currentTarget);
@@ -57,6 +91,10 @@ export default function Header() {
     }
   };
 
+  const avatarSrc = profileData.avatarUrl
+    ? buildAvatarSrc(profileData.avatarUrl, profileData.avatarVersion)
+    : authUser?.photoURL;
+
   return (
     <AppBar
       position="static"
@@ -75,7 +113,12 @@ export default function Header() {
       <Toolbar sx={{ justifyContent: 'flex-end', minHeight: 64, px: 4 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
           <IconButton onClick={handleMenuOpen} size="large" color="inherit">
-            <Avatar alt="Profil" src="https://randomuser.me/api/portraits/men/32.jpg" />
+            <Avatar
+              alt={profileData.displayName || authUser?.displayName || 'Profil'}
+              src={avatarSrc || undefined}
+            >
+              {(profileData.displayName?.[0] || authUser?.displayName?.[0] || authUser?.email?.[0] || 'C').toUpperCase()}
+            </Avatar>
           </IconButton>
           <Menu
             anchorEl={anchorEl}

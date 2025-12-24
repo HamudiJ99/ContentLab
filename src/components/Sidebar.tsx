@@ -1,4 +1,4 @@
-import { Drawer, List, ListItemButton, ListItemIcon, ListItemText, Box, Typography, Divider } from '@mui/material';
+import { Drawer, List, ListItemButton, ListItemIcon, ListItemText, Box, Typography, Divider, ButtonBase } from '@mui/material';
 import { useNavigate, useLocation } from 'react-router-dom';
 import HomeOutlinedIcon from '@mui/icons-material/HomeOutlined';
 import DashboardIcon from '@mui/icons-material/Dashboard';
@@ -38,10 +38,25 @@ export default function Sidebar() {
     >
       <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
         <Box sx={{ px: 3, py: 2 }}>
-          <Typography variant="h5" fontWeight={800} letterSpacing={0.6}>
-            Content
-            <Box component="span" sx={{ fontWeight: 400 }}>Lab</Box>
-          </Typography>
+          <ButtonBase
+            onClick={() => navigate('/home')}
+            sx={{
+              display: 'inline-flex',
+              alignItems: 'baseline',
+              gap: 0.5,
+              borderRadius: 2,
+              px: 1,
+              py: 0.5,
+              '&:hover': {
+                backgroundColor: 'transparent',
+              },
+            }}
+          >
+            <Typography variant="h5" fontWeight={800} letterSpacing={0.6}>
+              Content
+              <Box component="span" sx={{ fontWeight: 400 }}>Lab</Box>
+            </Typography>
+          </ButtonBase>
         </Box>
         <Divider sx={{ mx: 3, mb: 1 }} />
         <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', py: 2 }}>

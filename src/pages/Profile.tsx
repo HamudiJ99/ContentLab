@@ -22,6 +22,7 @@ import PhotoCameraIcon from '@mui/icons-material/PhotoCamera';
 import SaveIcon from '@mui/icons-material/Save';
 import LockResetIcon from '@mui/icons-material/LockReset';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
+import GavelIcon from '@mui/icons-material/Gavel';
 import { FirebaseError } from 'firebase/app';
 import {
   EmailAuthProvider,
@@ -39,11 +40,24 @@ import { auth, db, storage } from '../firebase/firebaseConfig';
 type ProfileForm = {
   displayName: string;
   avatarUrl: string;
+  avatarVersion: number | null;
 };
 
 const emptyProfile: ProfileForm = {
   displayName: '',
   avatarUrl: '',
+  avatarVersion: null,
+};
+
+const buildAvatarSrc = (url?: string | null, version?: number | null) => {
+  if (!url) {
+    return '';
+  }
+  if (!version) {
+    return url;
+  }
+  const separator = url.includes('?') ? '&' : '?';
+  return `${url}${separator}v=${version}`;
 };
 
 const errorMessages: Record<string, string> = {
@@ -67,6 +81,7 @@ export default function Profile() {
   const [profileFeedback, setProfileFeedback] = useState<{ success?: string; error?: string }>({});
   const [saveLoading, setSaveLoading] = useState(false);
   const [avatarUploading, setAvatarUploading] = useState(false);
+  const [pendingAvatarFile, setPendingAvatarFile] = useState<File | null>(null);
   const [passwordForm, setPasswordForm] = useState({ current: '', next: '', confirm: '' });
   const [passwordFeedback, setPasswordFeedback] = useState<{ success?: string; error?: string }>({});
   const [passwordLoading, setPasswordLoading] = useState(false);
@@ -75,12 +90,37 @@ export default function Profile() {
   const [deleteError, setDeleteError] = useState('');
   const [deleteLoading, setDeleteLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const previewUrlRef = useRef<string | null>(null);
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+
+  const revokePreviewUrl = () => {
+    if (previewUrlRef.current) {
+      URL.revokeObjectURL(previewUrlRef.current);
+      previewUrlRef.current = null;
+    }
+  };
+
+  const clearAvatarPreview = () => {
+    revokePreviewUrl();
+    setAvatarPreview(null);
+  };
+
+  const refreshAuthUser = async () => {
+    if (auth.currentUser) {
+      await auth.currentUser.reload();
+      setCurrentUser(auth.currentUser);
+    }
+  };
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       setCurrentUser(user);
     });
     return () => unsubscribe();
+  }, []);
+
+  useEffect(() => () => {
+    revokePreviewUrl();
   }, []);
 
   useEffect(() => {
@@ -96,6 +136,7 @@ export default function Profile() {
         setProfileForm({
           displayName: data.displayName ?? currentUser.displayName ?? currentUser.email?.split('@')[0] ?? '',
           avatarUrl: data.avatarUrl ?? currentUser.photoURL ?? '',
+          avatarVersion: typeof data.avatarVersion === 'number' ? data.avatarVersion : null,
         });
       } catch (error) {
         setProfileFeedback({ error: 'Profil konnte nicht geladen werden.' });
@@ -120,52 +161,72 @@ export default function Profile() {
     }
     setSaveLoading(true);
     setProfileFeedback({});
+    const shouldUploadAvatar = Boolean(pendingAvatarFile);
+    if (shouldUploadAvatar) {
+      setAvatarUploading(true);
+    }
     try {
+      let nextAvatarUrl: string | null = profileForm.avatarUrl || null;
+      let nextAvatarVersion: number | null = profileForm.avatarVersion;
+      if (pendingAvatarFile && currentUser) {
+        const storageRef = ref(storage, `profilePictures/${currentUser.uid}`);
+        await uploadBytes(storageRef, pendingAvatarFile);
+        nextAvatarUrl = await getDownloadURL(storageRef);
+        nextAvatarVersion = Date.now();
+      }
+      const profilePayload: Record<string, unknown> = {
+        displayName: profileForm.displayName.trim(),
+        updatedAt: serverTimestamp(),
+      };
+      if (nextAvatarUrl) {
+        profilePayload.avatarUrl = nextAvatarUrl;
+      }
+      if (typeof nextAvatarVersion === 'number') {
+        profilePayload.avatarVersion = nextAvatarVersion;
+      }
       await setDoc(
         doc(db, 'users', currentUser.uid),
-        {
-          displayName: profileForm.displayName.trim(),
-          avatarUrl: profileForm.avatarUrl,
-          updatedAt: serverTimestamp(),
-        },
+        profilePayload,
         { merge: true },
       );
       await updateProfile(currentUser, {
         displayName: profileForm.displayName.trim(),
-        photoURL: profileForm.avatarUrl || null,
+        photoURL: nextAvatarUrl,
       });
+      await refreshAuthUser();
+      setProfileForm((prev) => ({
+        ...prev,
+        displayName: profileForm.displayName.trim(),
+        avatarUrl: nextAvatarUrl ?? '',
+        avatarVersion: nextAvatarVersion,
+      }));
+      if (pendingAvatarFile) {
+        clearAvatarPreview();
+        setPendingAvatarFile(null);
+      }
       setProfileFeedback({ success: 'Profil aktualisiert.' });
     } catch (error) {
       setProfileFeedback({ error: 'Profil konnte nicht gespeichert werden.' });
     } finally {
+      if (shouldUploadAvatar) {
+        setAvatarUploading(false);
+      }
       setSaveLoading(false);
     }
   };
 
-  const handleAvatarUpload = async (event: ChangeEvent<HTMLInputElement>) => {
-    if (!currentUser) {
-      return;
-    }
+  const handleAvatarUpload = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) {
       return;
     }
-    setAvatarUploading(true);
-    setProfileFeedback({});
-    try {
-      const storageRef = ref(storage, `profilePictures/${currentUser.uid}`);
-      await uploadBytes(storageRef, file);
-      const url = await getDownloadURL(storageRef);
-      await setDoc(doc(db, 'users', currentUser.uid), { avatarUrl: url }, { merge: true });
-      await updateProfile(currentUser, { photoURL: url });
-      setProfileForm((prev) => ({ ...prev, avatarUrl: url }));
-      setProfileFeedback({ success: 'Profilbild aktualisiert.' });
-    } catch (error) {
-      setProfileFeedback({ error: 'Upload fehlgeschlagen.' });
-    } finally {
-      setAvatarUploading(false);
-      event.target.value = '';
-    }
+    revokePreviewUrl();
+    const previewUrl = URL.createObjectURL(file);
+    previewUrlRef.current = previewUrl;
+    setAvatarPreview(previewUrl);
+    setPendingAvatarFile(file);
+    setProfileFeedback({ success: 'Neues Profilbild ausgewählt. Bitte speichern, um es zu übernehmen.' });
+    event.target.value = '';
   };
 
   const handlePasswordChange = async () => {
@@ -238,6 +299,8 @@ export default function Profile() {
     );
   }
 
+  const avatarSrc = avatarPreview ?? buildAvatarSrc(profileForm.avatarUrl, profileForm.avatarVersion);
+
   return (
     <Box sx={{ p: { xs: 2, md: 4 }, maxWidth: 960, mx: 'auto' }}>
       <Typography variant="h4" fontWeight={700} mb={3}>
@@ -275,7 +338,7 @@ export default function Profile() {
               >
                 <Box sx={{ position: 'relative' }}>
                   <Avatar
-                    src={profileForm.avatarUrl || undefined}
+                    src={avatarSrc || undefined}
                     alt={profileForm.displayName}
                     onClick={() => !avatarUploading && fileInputRef.current?.click()}
                     sx={{
@@ -340,7 +403,7 @@ export default function Profile() {
                     variant="contained"
                     startIcon={<SaveIcon />}
                     onClick={handleSaveProfile}
-                    disabled={saveLoading}
+                    disabled={saveLoading || avatarUploading}
                   >
                     {saveLoading ? 'Speichern…' : 'Profil speichern'}
                   </Button>
@@ -416,12 +479,17 @@ export default function Profile() {
               <Divider />
 
               <Box>
-                <Typography variant="h6" fontWeight={600} mb={1.5}>
-                  Rechtliches
-                </Typography>
-                <Typography color="text.secondary" mb={2}>
-                  Zugriff auf unsere rechtlichen Hinweise.
-                </Typography>
+                <Stack direction="row" spacing={2} alignItems="center" mb={1.5}>
+                  <GavelIcon color="action" />
+                  <Box>
+                    <Typography variant="h6" fontWeight={600}>
+                      Rechtliches
+                    </Typography>
+                    <Typography color="text.secondary">
+                      Zugriff auf unsere rechtlichen Hinweise.
+                    </Typography>
+                  </Box>
+                </Stack>
                 <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
                   <Button component="a" href="/datenschutz">
                     Datenschutz
