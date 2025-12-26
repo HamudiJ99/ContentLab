@@ -91,15 +91,57 @@ export default function AppThemeProvider({ children }: Props) {
       default: '#0b0f19',
       paper: '#161c2a',
     };
+    const primaryColor = '#1D8BF1';
+    const primaryColorDark = '#176FCC';
+    const primaryColorLight = '#56A9F5';
+    const outlinedHoverColor = mode === 'light' ? 'rgba(29, 139, 241, 0.1)' : 'rgba(29, 139, 241, 0.3)';
 
     return createTheme({
       palette: {
         mode,
+        primary: {
+          main: primaryColor,
+          dark: primaryColorDark,
+          light: primaryColorLight,
+          contrastText: '#ffffff',
+        },
         background: mode === 'light' ? lightBackground : darkBackground,
         divider: mode === 'light' ? 'rgba(15, 23, 42, 0.08)' : 'rgba(148, 163, 184, 0.2)',
       },
       typography: {
         fontFamily: 'Inter, Roboto, Arial, sans-serif',
+        button: {
+          fontWeight: 600,
+          textTransform: 'none',
+        },
+      },
+      components: {
+        MuiButton: {
+          styleOverrides: {
+            root: {
+              fontWeight: 600,
+            },
+            containedPrimary: {
+              backgroundColor: primaryColor,
+              color: '#ffffff',
+              '&:hover': {
+                backgroundColor: primaryColorDark,
+              },
+            },
+            outlinedPrimary: {
+              borderColor: primaryColor,
+              color: primaryColor,
+              backgroundColor: mode === 'light' ? '#F8FBFF' : 'rgba(29, 139, 241, 0.12)',
+              '&:hover': {
+                borderColor: primaryColor,
+                backgroundColor: outlinedHoverColor,
+              },
+            },
+            textPrimary: {
+              color: primaryColor,
+            },
+          },
+        },
       },
     });
   }, [mode]);
