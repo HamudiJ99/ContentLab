@@ -1,4 +1,4 @@
-import { useMemo, useState, type DragEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import {
   Box,
   Typography,
@@ -43,6 +43,9 @@ import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
 import CourseCard from '../components/CourseCard';
+import { onAuthStateChanged, type User } from 'firebase/auth';
+import { auth, db } from '../firebase/firebaseConfig';
+import { collection, deleteDoc, doc, onSnapshot, query, setDoc, writeBatch } from 'firebase/firestore';
 
 type CategoryIconKey = 'school' | 'idea' | 'video' | 'people' | 'folder';
 
@@ -50,11 +53,11 @@ type Category = {
   id: string;
   name: string;
   icon: CategoryIconKey;
-  showInFilters: boolean;
+  showInFilters?: boolean;
 };
 
 type Course = {
-  id: number;
+  id: string;
   title: string;
   description: string;
   chapters: number;
@@ -63,64 +66,186 @@ type Course = {
   categoryIds: string[];
 };
 
+type CategoryFormState = {
+  name: string;
+  icon: CategoryIconKey;
+};
+
+type CourseFormState = {
+  title: string;
+  description: string;
+  categoryIds: string[];
+};
+
 const categoryIconMap: Record<CategoryIconKey, typeof FolderIcon> = {
+  folder: FolderIcon,
   school: SchoolIcon,
   idea: EmojiObjectsIcon,
   video: PlayCircleOutlineIcon,
   people: PeopleAltIcon,
-  folder: FolderIcon,
 };
 
-const iconOptions: { value: CategoryIconKey; label: string }[] = [
-  { value: 'school', label: 'Training' },
-  { value: 'idea', label: 'Ideen' },
-  { value: 'video', label: 'Video' },
-  { value: 'people', label: 'Team' },
-  { value: 'folder', label: 'Allgemein' },
+const iconOptions: Array<{ label: string; value: CategoryIconKey }> = [
+  { label: 'Allgemein', value: 'folder' },
+  { label: 'Lernen', value: 'school' },
+  { label: 'Ideen', value: 'idea' },
+  { label: 'Video', value: 'video' },
+  { label: 'Community', value: 'people' },
 ];
 
-const emptyCourseForm = {
+const emptyCourseForm: CourseFormState = {
   title: '',
   description: '',
-  categoryIds: [] as string[],
+  categoryIds: [],
 };
 
-export default function Courses() {
-  const [categories, setCategories] = useState<Category[]>([
-    { id: 'finance', name: 'Finanzen', icon: 'school', showInFilters: true },
-    { id: 'onboarding', name: 'Onboarding', icon: 'people', showInFilters: true },
-  ]);
-  const [courses, setCourses] = useState<Course[]>([
-    {
-      id: 1,
-      title: '02 | Buchhaltung',
-      description: 'Zertifizierungslauf für dein internes Finanzteam.',
-      chapters: 3,
-      lessons: 12,
-      duration: '1:36',
-      categoryIds: ['finance'],
-    },
-    {
-      id: 2,
-      title: '01 | Onboarding PlanVision3D',
-      description: 'Begleitender Kurs für neue Teammitglieder.',
-      chapters: 2,
-      lessons: 8,
-      duration: '2:12',
-      categoryIds: ['onboarding'],
-    },
-  ]);
+const Courses = () => {
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [courses, setCourses] = useState<Course[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState<'all' | 'uncategorized' | string>('all');
+  const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [categoryDialogOpen, setCategoryDialogOpen] = useState(false);
-  const [categoryForm, setCategoryForm] = useState({ name: '', icon: iconOptions[0].value });
-  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
-  const [categoryDrawerOpen, setCategoryDrawerOpen] = useState(false);
   const [courseDialogOpen, setCourseDialogOpen] = useState(false);
-  const [courseForm, setCourseForm] = useState({ ...emptyCourseForm });
-  const [editingCourseId, setEditingCourseId] = useState<number | null>(null);
-  const [draggingCourseId, setDraggingCourseId] = useState<number | null>(null);
+  const [categoryDrawerOpen, setCategoryDrawerOpen] = useState(false);
+  const [categoryForm, setCategoryForm] = useState<CategoryFormState>({
+    name: '',
+    icon: iconOptions[0].value,
+  });
+  const [courseForm, setCourseForm] = useState<CourseFormState>(emptyCourseForm);
+  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
+  const [editingCourseId, setEditingCourseId] = useState<string | null>(null);
+  const [draggingCourseId, setDraggingCourseId] = useState<string | null>(null);
   const [draggingCategoryId, setDraggingCategoryId] = useState<string | null>(null);
+  const [currentUser, setCurrentUser] = useState<User | null>(auth.currentUser);
+  const coursesRef = useRef<Course[]>([]);
+  const categoriesRef = useRef<Category[]>([]);
+
+  const updateCourses = (updater: (prev: Course[]) => Course[]) => {
+    setCourses((prev) => {
+      const next = updater(prev);
+      coursesRef.current = next;
+      return next;
+    });
+  };
+
+  const updateCategories = (updater: (prev: Category[]) => Category[]) => {
+    setCategories((prev) => {
+      const next = updater(prev);
+      categoriesRef.current = next;
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setCurrentUser(user);
+    });
+    return unsubscribe;
+  }, []);
+
+  useEffect(() => {
+    if (!currentUser) {
+      updateCategories(() => []);
+      updateCourses(() => []);
+      return undefined;
+    }
+
+    const categoriesQuery = query(collection(db, 'users', currentUser.uid, 'categories'));
+    const unsubscribeCategories = onSnapshot(
+      categoriesQuery,
+      (snapshot) => {
+        const loadedCategories: Category[] = snapshot.docs
+          .map((docSnapshot) => {
+            const data = docSnapshot.data();
+            const icon = (data.icon as CategoryIconKey) || 'folder';
+            return {
+              id: docSnapshot.id,
+              name: data.name ?? 'Neue Kategorie',
+              icon: iconOptions.some((option) => option.value === icon) ? icon : 'folder',
+              showInFilters: data.showInFilters !== false,
+              position: typeof data.position === 'number' ? data.position : Number.MAX_SAFE_INTEGER,
+            };
+          })
+          .sort((a, b) => a.position - b.position)
+          .map(({ position, ...category }) => category);
+        categoriesRef.current = loadedCategories;
+        setCategories(loadedCategories);
+      },
+      (error) => {
+        console.error('Kategorien konnten nicht geladen werden', error);
+      },
+    );
+
+    const coursesQuery = query(collection(db, 'users', currentUser.uid, 'courses'));
+    const unsubscribeCourses = onSnapshot(
+      coursesQuery,
+      (snapshot) => {
+        const loadedCourses: Course[] = snapshot.docs
+          .map((docSnapshot) => {
+            const data = docSnapshot.data();
+            return {
+              id: docSnapshot.id,
+              title: data.title ?? 'Unbenannter Kurs',
+              description: data.description ?? '',
+              chapters: typeof data.chapters === 'number' ? data.chapters : 0,
+              lessons: typeof data.lessons === 'number' ? data.lessons : 0,
+              duration: typeof data.duration === 'string' ? data.duration : '0:00',
+              categoryIds: Array.isArray(data.categoryIds) ? data.categoryIds : [],
+              position: typeof data.position === 'number' ? data.position : Number.MAX_SAFE_INTEGER,
+            };
+          })
+          .sort((a, b) => a.position - b.position)
+          .map(({ position, ...course }) => course);
+        coursesRef.current = loadedCourses;
+        setCourses(loadedCourses);
+      },
+      (error) => {
+        console.error('Kurse konnten nicht geladen werden', error);
+      },
+    );
+
+    return () => {
+      unsubscribeCategories();
+      unsubscribeCourses();
+    };
+  }, [currentUser]);
+
+  useEffect(() => {
+    setSelectedCategory('all');
+  }, [currentUser]);
+
+  const persistCategoryOrder = async (nextCategories: Category[]) => {
+    if (!currentUser) {
+      return;
+    }
+    try {
+      const batch = writeBatch(db);
+      nextCategories.forEach((category, index) => {
+        const categoryRef = doc(db, 'users', currentUser.uid, 'categories', category.id);
+        batch.set(categoryRef, { position: index }, { merge: true });
+      });
+      await batch.commit();
+    } catch (error) {
+      console.error('Kategorie-Reihenfolge konnte nicht gespeichert werden', error);
+    }
+  };
+
+  const persistCourseOrder = async (nextCourses: Course[]) => {
+    if (!currentUser) {
+      return;
+    }
+    try {
+      const batch = writeBatch(db);
+      nextCourses.forEach((course, index) => {
+        const courseRef = doc(db, 'users', currentUser.uid, 'courses', course.id);
+        batch.set(courseRef, { position: index }, { merge: true });
+      });
+      await batch.commit();
+    } catch (error) {
+      console.error('Kurs-Reihenfolge konnte nicht gespeichert werden', error);
+    }
+  };
+
   const transparentDragImage = useMemo(() => {
     if (typeof document === 'undefined') {
       return null;
@@ -162,43 +287,105 @@ export default function Courses() {
     setCategoryDialogOpen(true);
   };
 
-  const handleSaveCategory = () => {
-    if (!categoryForm.name.trim()) {
+  const handleSaveCategory = async () => {
+    if (!categoryForm.name.trim() || !currentUser) {
       return;
     }
-    if (editingCategoryId) {
-      setCategories((prev) => prev.map((cat) => (cat.id === editingCategoryId ? { ...cat, ...categoryForm } : cat)));
-    } else {
-      const id = typeof crypto?.randomUUID === 'function'
-        ? crypto.randomUUID()
-        : `cat-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-      setCategories((prev) => [...prev, { id, ...categoryForm, showInFilters: true }]);
+    try {
+      if (editingCategoryId) {
+        let updatedCategories: Category[] = categoriesRef.current;
+        updateCategories((prev) => {
+          updatedCategories = prev.map((cat) => (cat.id === editingCategoryId ? { ...cat, ...categoryForm } : cat));
+          return updatedCategories;
+        });
+        const categoryRef = doc(db, 'users', currentUser.uid, 'categories', editingCategoryId);
+        await setDoc(
+          categoryRef,
+          { name: categoryForm.name, icon: categoryForm.icon },
+          { merge: true },
+        );
+        await persistCategoryOrder(updatedCategories);
+      } else {
+        const categoryRef = doc(collection(db, 'users', currentUser.uid, 'categories'));
+        const newCategory: Category = { id: categoryRef.id, ...categoryForm, showInFilters: true };
+        let updatedCategories: Category[] = categoriesRef.current;
+        updateCategories((prev) => {
+          updatedCategories = [...prev, newCategory];
+          return updatedCategories;
+        });
+        await setDoc(categoryRef, {
+          name: newCategory.name,
+          icon: newCategory.icon,
+          showInFilters: true,
+          position: updatedCategories.length - 1,
+        });
+        await persistCategoryOrder(updatedCategories);
+      }
+      setCategoryDialogOpen(false);
+    } catch (error) {
+      console.error('Kategorie konnte nicht gespeichert werden', error);
     }
-    setCategoryDialogOpen(false);
   };
 
-  const handleDeleteCategory = (categoryId: string) => {
-    setCategories((prev) => prev.filter((cat) => cat.id !== categoryId));
-    setCourses((prev) =>
-      prev.map((course) =>
-        course.categoryIds.includes(categoryId)
-          ? { ...course, categoryIds: course.categoryIds.filter((id) => id !== categoryId) }
-          : course,
-      ),
+  const handleDeleteCategory = async (categoryId: string) => {
+    if (!currentUser) {
+      return;
+    }
+    const coursesNeedingUpdate: Course[] = [];
+    let updatedCategories: Category[] = categoriesRef.current;
+    updateCategories((prev) => {
+      updatedCategories = prev.filter((cat) => cat.id !== categoryId);
+      return updatedCategories;
+    });
+    updateCourses((prev) =>
+      prev.map((course) => {
+        if (!course.categoryIds.includes(categoryId)) {
+          return course;
+        }
+        const updatedCourse = {
+          ...course,
+          categoryIds: course.categoryIds.filter((id) => id !== categoryId),
+        };
+        coursesNeedingUpdate.push(updatedCourse);
+        return updatedCourse;
+      }),
     );
+    try {
+      await deleteDoc(doc(db, 'users', currentUser.uid, 'categories', categoryId));
+      await persistCategoryOrder(updatedCategories);
+      await Promise.all(
+        coursesNeedingUpdate.map((course) =>
+          setDoc(doc(db, 'users', currentUser.uid, 'courses', course.id), { categoryIds: course.categoryIds }, { merge: true }),
+        ),
+      );
+    } catch (error) {
+      console.error('Kategorie konnte nicht gelöscht werden', error);
+    }
     if (selectedCategory === categoryId) {
       setSelectedCategory('all');
     }
   };
 
-  const handleToggleCategoryVisibility = (categoryId: string, isVisible: boolean) => {
-    setCategories((prev) =>
+  const handleToggleCategoryVisibility = async (categoryId: string, isVisible: boolean) => {
+    updateCategories((prev) =>
       prev.map((category) =>
         category.id === categoryId ? { ...category, showInFilters: isVisible } : category,
       ),
     );
     if (!isVisible && selectedCategory === categoryId) {
       setSelectedCategory('all');
+    }
+    if (!currentUser) {
+      return;
+    }
+    try {
+      await setDoc(
+        doc(db, 'users', currentUser.uid, 'categories', categoryId),
+        { showInFilters: isVisible },
+        { merge: true },
+      );
+    } catch (error) {
+      console.error('Kategorie-Sichtbarkeit konnte nicht gespeichert werden', error);
     }
   };
 
@@ -217,39 +404,83 @@ export default function Courses() {
     setCourseDialogOpen(true);
   };
 
-  const handleSaveCourse = () => {
-    if (!courseForm.title.trim()) {
+  const handleSaveCourse = async () => {
+    if (!courseForm.title.trim() || !currentUser) {
       return;
     }
-    setCourses((prev) => {
+    try {
       if (editingCourseId) {
-        return prev.map((course) =>
-          course.id === editingCourseId
-            ? {
-                ...course,
-                title: courseForm.title,
-                description: courseForm.description,
-                categoryIds: courseForm.categoryIds,
-              }
-            : course,
+        let updatedCourses: Course[] = coursesRef.current;
+        updateCourses((prev) => {
+          updatedCourses = prev.map((course) =>
+            course.id === editingCourseId
+              ? {
+                  ...course,
+                  title: courseForm.title,
+                  description: courseForm.description,
+                  categoryIds: courseForm.categoryIds,
+                }
+              : course,
+          );
+          return updatedCourses;
+        });
+        await setDoc(
+          doc(db, 'users', currentUser.uid, 'courses', editingCourseId),
+          {
+            title: courseForm.title,
+            description: courseForm.description,
+            categoryIds: courseForm.categoryIds,
+          },
+          { merge: true },
         );
+      } else {
+        const courseRef = doc(collection(db, 'users', currentUser.uid, 'courses'));
+        const newCourse: Course = {
+          id: courseRef.id,
+          title: courseForm.title,
+          description: courseForm.description,
+          chapters: 0,
+          lessons: 0,
+          duration: '0:00',
+          categoryIds: courseForm.categoryIds,
+        };
+        let updatedCourses: Course[] = coursesRef.current;
+        updateCourses((prev) => {
+          updatedCourses = [newCourse, ...prev];
+          return updatedCourses;
+        });
+        await setDoc(courseRef, {
+          title: newCourse.title,
+          description: newCourse.description,
+          categoryIds: newCourse.categoryIds,
+          chapters: newCourse.chapters,
+          lessons: newCourse.lessons,
+          duration: newCourse.duration,
+          position: 0,
+        });
+        await persistCourseOrder(updatedCourses);
       }
-      const newCourse: Course = {
-        id: Date.now(),
-        title: courseForm.title,
-        description: courseForm.description,
-        chapters: 0,
-        lessons: 0,
-        duration: '0:00',
-        categoryIds: courseForm.categoryIds,
-      };
-      return [newCourse, ...prev];
-    });
-    setCourseDialogOpen(false);
+      setCourseDialogOpen(false);
+    } catch (error) {
+      console.error('Kurs konnte nicht gespeichert werden', error);
+    }
   };
 
-  const handleDeleteCourse = (id: number) => {
-    setCourses((prev) => prev.filter((course) => course.id !== id));
+  const handleDeleteCourse = async (id: string) => {
+    if (!currentUser) {
+      return;
+    }
+    let updatedCourses: Course[] = coursesRef.current;
+    updateCourses((prev) => {
+      updatedCourses = prev.filter((course) => course.id !== id);
+      return updatedCourses;
+    });
+    try {
+      await deleteDoc(doc(db, 'users', currentUser.uid, 'courses', id));
+      await persistCourseOrder(updatedCourses);
+    } catch (error) {
+      console.error('Kurs konnte nicht gelöscht werden', error);
+    }
   };
 
   const renderCategoryIcon = (iconKey?: CategoryIconKey) => {
@@ -267,21 +498,21 @@ export default function Courses() {
     }));
   };
 
-  const handleDragStart = (event: DragEvent<HTMLDivElement>, courseId: number) => {
+  const handleDragStart = (event: DragEvent<HTMLDivElement>, courseId: string) => {
     event.dataTransfer.effectAllowed = 'move';
-    event.dataTransfer.setData('text/plain', String(courseId));
+    event.dataTransfer.setData('text/plain', courseId);
     if (transparentDragImage) {
       event.dataTransfer.setDragImage(transparentDragImage, 0, 0);
     }
     setDraggingCourseId(courseId);
   };
 
-  const handleDragOverCourse = (event: DragEvent<HTMLDivElement>, targetCourseId: number) => {
+  const handleDragOverCourse = (event: DragEvent<HTMLDivElement>, targetCourseId: string) => {
     event.preventDefault();
     if (draggingCourseId === null || draggingCourseId === targetCourseId) {
       return;
     }
-    setCourses((prev) => {
+    updateCourses((prev) => {
       const updated = [...prev];
       const fromIndex = updated.findIndex((course) => course.id === draggingCourseId);
       const toIndex = updated.findIndex((course) => course.id === targetCourseId);
@@ -296,6 +527,9 @@ export default function Courses() {
 
   const handleDropOnCourse = (event: DragEvent<HTMLDivElement>) => {
     event.preventDefault();
+    if (draggingCourseId) {
+      void persistCourseOrder(coursesRef.current);
+    }
     setDraggingCourseId(null);
   };
 
@@ -308,25 +542,35 @@ export default function Courses() {
     if (draggingCourseId === null) {
       return;
     }
-    setCourses((prev) => {
+    let updatedCourses: Course[] = coursesRef.current;
+    updateCourses((prev) => {
       const updated = [...prev];
       const fromIndex = updated.findIndex((course) => course.id === draggingCourseId);
       if (fromIndex === -1 || fromIndex === updated.length - 1) {
+        updatedCourses = prev;
         return prev;
       }
       const [movedCourse] = updated.splice(fromIndex, 1);
       updated.push(movedCourse);
+      updatedCourses = updated;
       return updated;
     });
+    if (draggingCourseId) {
+      void persistCourseOrder(updatedCourses);
+    }
     setDraggingCourseId(null);
   };
 
   const handleDragEnd = () => {
-    setDraggingCourseId(null);
+    if (draggingCourseId) {
+      setDraggingCourseId(null);
+      void persistCourseOrder(coursesRef.current);
+    }
   };
 
   const handleCategoryDragStart = (event: DragEvent<HTMLLIElement>, categoryId: string) => {
     event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', categoryId);
     setDraggingCategoryId(categoryId);
   };
 
@@ -335,7 +579,7 @@ export default function Courses() {
     if (!draggingCategoryId || draggingCategoryId === targetCategoryId) {
       return;
     }
-    setCategories((prev) => {
+    updateCategories((prev) => {
       const updated = [...prev];
       const fromIndex = updated.findIndex((category) => category.id === draggingCategoryId);
       const toIndex = updated.findIndex((category) => category.id === targetCategoryId);
@@ -350,6 +594,9 @@ export default function Courses() {
 
   const handleCategoryDrop = (event: DragEvent<HTMLLIElement>) => {
     event.preventDefault();
+    if (draggingCategoryId) {
+      void persistCategoryOrder(categoriesRef.current);
+    }
     setDraggingCategoryId(null);
   };
 
@@ -362,16 +609,20 @@ export default function Courses() {
     if (!draggingCategoryId) {
       return;
     }
-    setCategories((prev) => {
+    let updatedCategories: Category[] = categoriesRef.current;
+    updateCategories((prev) => {
       const updated = [...prev];
       const fromIndex = updated.findIndex((category) => category.id === draggingCategoryId);
       if (fromIndex === -1 || fromIndex === updated.length - 1) {
+        updatedCategories = prev;
         return prev;
       }
       const [movedCategory] = updated.splice(fromIndex, 1);
       updated.push(movedCategory);
+      updatedCategories = updated;
       return updated;
     });
+    void persistCategoryOrder(updatedCategories);
     setDraggingCategoryId(null);
   };
 
@@ -768,6 +1019,8 @@ export default function Courses() {
           </Button>
         </DialogActions>
       </Dialog>
-    </Box>
-  );
-}
+      </Box>
+    );
+  };
+
+  export default Courses;
