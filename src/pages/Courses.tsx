@@ -42,12 +42,103 @@ import CloseIcon from '@mui/icons-material/Close';
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
+import CodeIcon from '@mui/icons-material/Code';
+import DesignServicesIcon from '@mui/icons-material/DesignServices';
+import CampaignIcon from '@mui/icons-material/Campaign';
+import MusicNoteIcon from '@mui/icons-material/MusicNote';
+import MicIcon from '@mui/icons-material/Mic';
+import FitnessCenterIcon from '@mui/icons-material/FitnessCenter';
+import SelfImprovementIcon from '@mui/icons-material/SelfImprovement';
+import ScienceIcon from '@mui/icons-material/Science';
+import TravelExploreIcon from '@mui/icons-material/TravelExplore';
+import LanguageIcon from '@mui/icons-material/Language';
+import WorkOutlineIcon from '@mui/icons-material/WorkOutline';
+import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
+import BrushIcon from '@mui/icons-material/Brush';
+import EmojiEventsIcon from '@mui/icons-material/EmojiEvents';
+import MenuBookIcon from '@mui/icons-material/MenuBook';
+import RestaurantMenuIcon from '@mui/icons-material/RestaurantMenu';
+import PsychologyIcon from '@mui/icons-material/Psychology';
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
+import GroupsIcon from '@mui/icons-material/Groups';
+import CameraAltIcon from '@mui/icons-material/CameraAlt';
+import ComputerIcon from '@mui/icons-material/Computer';
+import SportsEsportsIcon from '@mui/icons-material/SportsEsports';
+import SmartToyIcon from '@mui/icons-material/SmartToy';
+import VolunteerActivismIcon from '@mui/icons-material/VolunteerActivism';
+import PetsIcon from '@mui/icons-material/Pets';
+import SpaIcon from '@mui/icons-material/Spa';
+import SecurityIcon from '@mui/icons-material/Security';
+import StorefrontIcon from '@mui/icons-material/Storefront';
+import TrendingUpIcon from '@mui/icons-material/TrendingUp';
+import ShoppingBagIcon from '@mui/icons-material/ShoppingBag';
+import SupportAgentIcon from '@mui/icons-material/SupportAgent';
+import HealthAndSafetyIcon from '@mui/icons-material/HealthAndSafety';
 import CourseCard from '../components/CourseCard';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import { auth, db } from '../firebase/firebaseConfig';
 import { collection, deleteDoc, doc, onSnapshot, query, setDoc, writeBatch } from 'firebase/firestore';
 
-type CategoryIconKey = 'school' | 'idea' | 'video' | 'people' | 'folder';
+type IconOption = {
+  label: string;
+  value: string;
+  Icon: typeof FolderIcon;
+  group: string;
+  keywords?: string[];
+};
+
+const iconOptions = [
+  { label: 'Allgemein', value: 'folder', Icon: FolderIcon, group: 'Basis', keywords: ['default', 'standard'] },
+  { label: 'Lernen', value: 'school', Icon: SchoolIcon, group: 'Basis', keywords: ['education'] },
+  { label: 'Ideen', value: 'idea', Icon: EmojiObjectsIcon, group: 'Basis', keywords: ['inspiration'] },
+  { label: 'Video', value: 'video', Icon: PlayCircleOutlineIcon, group: 'Basis', keywords: ['media'] },
+  { label: 'Community', value: 'people', Icon: PeopleAltIcon, group: 'Basis', keywords: ['team'] },
+  { label: 'Programmierung', value: 'code', Icon: CodeIcon, group: 'Content', keywords: ['dev', 'software'] },
+  { label: 'Design', value: 'design', Icon: DesignServicesIcon, group: 'Content', keywords: ['ui', 'ux'] },
+  { label: 'Marketing', value: 'campaign', Icon: CampaignIcon, group: 'Business', keywords: ['ads'] },
+  { label: 'Musik', value: 'music', Icon: MusicNoteIcon, group: 'Content' },
+  { label: 'Podcast', value: 'podcast', Icon: MicIcon, group: 'Content', keywords: ['audio'] },
+  { label: 'Kamera', value: 'camera', Icon: CameraAltIcon, group: 'Content', keywords: ['foto'] },
+  { label: 'Computer', value: 'computer', Icon: ComputerIcon, group: 'Content', keywords: ['tech'] },
+  { label: 'Gaming', value: 'gaming', Icon: SportsEsportsIcon, group: 'Content', keywords: ['esports'] },
+  { label: 'AI & Bots', value: 'bots', Icon: SmartToyIcon, group: 'Content', keywords: ['automation'] },
+  { label: 'Support', value: 'support', Icon: SupportAgentIcon, group: 'Business', keywords: ['service'] },
+  { label: 'Business', value: 'business', Icon: WorkOutlineIcon, group: 'Business' },
+  { label: 'Finanzen', value: 'finance', Icon: AttachMoneyIcon, group: 'Business', keywords: ['money'] },
+  { label: 'E-Commerce', value: 'store', Icon: StorefrontIcon, group: 'Business', keywords: ['shop', 'commerce'] },
+  { label: 'Vertrieb', value: 'sales', Icon: TrendingUpIcon, group: 'Business', keywords: ['sales'] },
+  { label: 'Produkte', value: 'products', Icon: ShoppingBagIcon, group: 'Business', keywords: ['shop'] },
+  { label: 'Events', value: 'events', Icon: EmojiEventsIcon, group: 'Business', keywords: ['live'] },
+  { label: 'Coaching', value: 'coaching', Icon: PsychologyIcon, group: 'Business', keywords: ['mindset'] },
+  { label: 'Inspiration', value: 'spark', Icon: AutoAwesomeIcon, group: 'Business' },
+  { label: 'Kunst', value: 'art', Icon: BrushIcon, group: 'Lifestyle', keywords: ['creative', 'drawing'] },
+  { label: 'Lesen', value: 'reading', Icon: MenuBookIcon, group: 'Lifestyle', keywords: ['buch'] },
+  { label: 'Kulinarik', value: 'food', Icon: RestaurantMenuIcon, group: 'Lifestyle', keywords: ['cooking'] },
+  { label: 'Fitness', value: 'fitness', Icon: FitnessCenterIcon, group: 'Lifestyle', keywords: ['sport'] },
+  { label: 'Mindfulness', value: 'mindfulness', Icon: SelfImprovementIcon, group: 'Lifestyle', keywords: ['mental'] },
+  { label: 'Wellness', value: 'wellness', Icon: SpaIcon, group: 'Lifestyle', keywords: ['health'] },
+  { label: 'Wissenschaft', value: 'science', Icon: ScienceIcon, group: 'Lifestyle', keywords: ['lab'] },
+  { label: 'Reisen', value: 'travel', Icon: TravelExploreIcon, group: 'Lifestyle', keywords: ['adventure'] },
+  { label: 'Sprachen', value: 'language', Icon: LanguageIcon, group: 'Lifestyle', keywords: ['sprachkurs'] },
+  { label: 'Haustiere', value: 'pets', Icon: PetsIcon, group: 'Lifestyle', keywords: ['tier'] },
+  { label: 'Sicherheit', value: 'security', Icon: SecurityIcon, group: 'Lifestyle', keywords: ['privacy'] },
+  { label: 'Teams', value: 'teams', Icon: GroupsIcon, group: 'Community', keywords: ['crew'] },
+  { label: 'Freiwilligenarbeit', value: 'volunteer', Icon: VolunteerActivismIcon, group: 'Community', keywords: ['help'] },
+  { label: 'Gesundheit', value: 'health', Icon: HealthAndSafetyIcon, group: 'Community', keywords: ['medizin'] },
+  { label: 'Unterstützung', value: 'supporters', Icon: SupportAgentIcon, group: 'Community', keywords: ['service'] },
+] as const satisfies ReadonlyArray<IconOption>;
+
+type CategoryIconKey = (typeof iconOptions)[number]['value'];
+
+const iconOptionsList: ReadonlyArray<IconOption> = iconOptions;
+
+const categoryIconMap: Record<CategoryIconKey, typeof FolderIcon> = iconOptions.reduce(
+  (map, option) => {
+    map[option.value as CategoryIconKey] = option.Icon;
+    return map;
+  },
+  {} as Record<CategoryIconKey, typeof FolderIcon>,
+);
 
 type Category = {
   id: string;
@@ -76,22 +167,6 @@ type CourseFormState = {
   description: string;
   categoryIds: string[];
 };
-
-const categoryIconMap: Record<CategoryIconKey, typeof FolderIcon> = {
-  folder: FolderIcon,
-  school: SchoolIcon,
-  idea: EmojiObjectsIcon,
-  video: PlayCircleOutlineIcon,
-  people: PeopleAltIcon,
-};
-
-const iconOptions: Array<{ label: string; value: CategoryIconKey }> = [
-  { label: 'Allgemein', value: 'folder' },
-  { label: 'Lernen', value: 'school' },
-  { label: 'Ideen', value: 'idea' },
-  { label: 'Video', value: 'video' },
-  { label: 'Community', value: 'people' },
-];
 
 const emptyCourseForm: CourseFormState = {
   title: '',
@@ -255,6 +330,7 @@ const Courses = () => {
     canvas.height = 0;
     return canvas;
   }, []);
+
 
   const filteredCourses = useMemo(() => {
     return courses.filter((course) => {
@@ -484,7 +560,7 @@ const Courses = () => {
   };
 
   const renderCategoryIcon = (iconKey?: CategoryIconKey) => {
-    const IconComponent = iconKey ? categoryIconMap[iconKey] : FolderIcon;
+    const IconComponent = iconKey ? categoryIconMap[iconKey] ?? FolderIcon : FolderIcon;
     return <IconComponent fontSize="small" />;
   };
 
@@ -640,7 +716,7 @@ const Courses = () => {
           Meine Kurse
         </Typography>
         <Typography color="text.secondary">
-          Verwalte deine Lerninhalte, Kategorien und Kursstarts an einem Ort.
+          Verwalte deine Lerninhalte an einem Ort.
         </Typography>
       </Box>
 
@@ -929,40 +1005,54 @@ const Courses = () => {
           </Typography>
           <Box
             sx={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(64px, 1fr))',
-              gap: 1,
-              mt: 1,
+              maxHeight: (theme) => theme.spacing(45),
+              overflowY: 'auto',
+              pr: 1,
             }}
           >
-            {iconOptions.map((option) => {
-              const IconComponent = categoryIconMap[option.value];
-              const selected = categoryForm.icon === option.value;
-              return (
-                <Box key={option.value}>
-                  <Tooltip title={option.label} arrow>
-                    <IconButton
-                      onClick={() => setCategoryForm((prev) => ({ ...prev, icon: option.value }))}
-                      sx={{
-                        width: '100%',
-                        borderRadius: 2,
-                        border: (theme) => `1px solid ${selected ? theme.palette.primary.main : theme.palette.divider}`,
-                        backgroundColor: (theme) => (selected ? theme.palette.action.selected : 'transparent'),
-                      }}
-                    >
-                      <IconComponent />
-                    </IconButton>
-                  </Tooltip>
-                </Box>
-              );
-            })}
+            <Box
+              sx={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+                gap: 0.75,
+                gridAutoRows: (theme) => theme.spacing(7.5),
+              }}
+            >
+              {iconOptionsList.map((option) => {
+                const IconComponent = categoryIconMap[option.value as CategoryIconKey];
+                const selected = categoryForm.icon === option.value;
+                return (
+                  <Box key={option.value}>
+                    <Tooltip title={option.label} arrow>
+                      <IconButton
+                        onClick={() => setCategoryForm((prev) => ({ ...prev, icon: option.value as CategoryIconKey }))}
+                        sx={{
+                          width: '100%',
+                          borderRadius: 2,
+                          border: (theme) => `1px solid ${selected ? theme.palette.primary.main : theme.palette.divider}`,
+                          backgroundColor: (theme) => (selected ? theme.palette.action.selected : 'transparent'),
+                        }}
+                      >
+                        <IconComponent />
+                      </IconButton>
+                    </Tooltip>
+                  </Box>
+                );
+              })}
+            </Box>
           </Box>
         </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setCategoryDialogOpen(false)}>Abbrechen</Button>
-          <Button variant="contained" onClick={handleSaveCategory}>
-            Speichern
-          </Button>
+        <DialogActions sx={{ px: 3, pb: 3 }}>
+          <Stack
+            direction="row"
+            spacing={1.5}
+            sx={{ width: '100%', maxWidth: 520, justifyContent: 'flex-end', mx: 'auto' }}
+          >
+            <Button onClick={() => setCategoryDialogOpen(false)}>Abbrechen</Button>
+            <Button variant="contained" onClick={handleSaveCategory}>
+              Speichern
+            </Button>
+          </Stack>
         </DialogActions>
       </Dialog>
 
@@ -1012,11 +1102,17 @@ const Courses = () => {
             </FormControl>
           </Stack>
         </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setCourseDialogOpen(false)}>Abbrechen</Button>
-          <Button variant="contained" onClick={handleSaveCourse}>
-            Speichern
-          </Button>
+        <DialogActions sx={{ px: 3, pb: 3 }}>
+          <Stack
+            direction="row"
+            spacing={1.5}
+            sx={{ width: '100%', maxWidth: 520, justifyContent: 'flex-end', mx: 'auto' }}
+          >
+            <Button onClick={() => setCourseDialogOpen(false)}>Abbrechen</Button>
+            <Button variant="contained" onClick={handleSaveCourse}>
+              Speichern
+            </Button>
+          </Stack>
         </DialogActions>
       </Dialog>
       </Box>
