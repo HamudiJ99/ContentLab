@@ -21,6 +21,7 @@ export type CourseCardProps = {
   lessons?: number;
   duration?: string;
   coverImageUrl?: string;
+  coverColor?: string;
   onEdit?: () => void;
   onDelete?: () => void;
   onOpen?: () => void;
@@ -33,6 +34,7 @@ export default function CourseCard({
   lessons,
   duration,
   coverImageUrl,
+  coverColor,
   onEdit,
   onDelete,
   onOpen,
@@ -101,7 +103,11 @@ export default function CourseCard({
           width: 120,
           minHeight: 120,
           borderRadius: 2,
-          background: coverImageUrl ? undefined : 'linear-gradient(135deg, #a855f7, #6366f1)',
+          background: coverImageUrl
+            ? undefined
+            : coverColor && coverColor.trim()
+              ? coverColor
+              : 'linear-gradient(135deg, #a855f7, #6366f1)',
           position: 'relative',
           overflow: 'hidden',
           display: 'flex',

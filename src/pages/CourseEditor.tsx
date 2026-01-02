@@ -6,20 +6,26 @@ import {
   Box,
   Breadcrumbs,
   Button,
+  Checkbox,
   CircularProgress,
+  Collapse,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
   Divider,
   FormControl,
+  FormControlLabel,
   IconButton,
   InputLabel,
   Link,
   Menu,
   MenuItem,
   Paper,
+  Radio,
+  RadioGroup,
   Select,
+  Slider,
   Stack,
   TextField,
   Tooltip,
@@ -30,7 +36,6 @@ import AddIcon from '@mui/icons-material/Add';
 import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined';
 import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import FolderIcon from '@mui/icons-material/Folder';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import UploadIcon from '@mui/icons-material/Upload';
@@ -49,6 +54,8 @@ import {
 } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { auth, db, storage } from '../firebase/firebaseConfig';
+import Cropper, { type Area } from 'react-easy-crop';
+import 'react-easy-crop/react-easy-crop.css';
 
 const statusStyles = {
   published: { label: 'Veröffentlicht', dot: '#22c55e', color: '#22c55e' },
@@ -58,11 +65,19 @@ const statusStyles = {
 
 type ChapterStatus = keyof typeof statusStyles;
 
+type Category = {
+  id: string;
+  name: string;
+  showInFilters?: boolean;
+};
+
 type CourseData = {
   id: string;
   title: string;
   description: string;
+  categoryIds: string[];
   coverImageUrl?: string;
+  coverColor?: string;
 };
 
 type Chapter = {
@@ -70,7 +85,7 @@ type Chapter = {
   title: string;
   description: string;
   status: ChapterStatus;
-  coverImageUrl?: string;
+  coverColor?: string;
   position: number;
 };
 
@@ -78,33 +93,61 @@ type CourseFormState = {
   title: string;
   description: string;
   coverImageUrl: string;
+  categoryIds: string[];
+  coverColor: string;
 };
 
 const emptyCourseForm: CourseFormState = {
   title: '',
   description: '',
   coverImageUrl: '',
+  categoryIds: [],
+  coverColor: '',
 };
 
 type ChapterFormState = {
   title: string;
   description: string;
   status: ChapterStatus;
-  coverImageUrl: string;
+  coverColor: string;
 };
 
 const emptyChapterForm: ChapterFormState = {
   title: '',
   description: '',
   status: 'draft',
-  coverImageUrl: '',
+  coverColor: '',
 };
+type CropPreset = 'free' | '3:2' | '16:9' | 'square';
+
+const cropAspectPresets: Array<{ label: string; value: CropPreset; aspect?: number }> = [
+  { label: 'Frei', value: 'free' },
+  { label: '3:2', value: '3:2', aspect: 3 / 2 },
+  { label: '16:9', value: '16:9', aspect: 16 / 9 },
+  { label: 'Quadrat', value: 'square', aspect: 1 },
+];
+
+const coverColorOptions: Array<{ label: string; value: string; swatch?: string }> = [
+  { label: 'Standardfarbe', value: '', swatch: '#1a65ff' },
+  { label: 'Rot', value: '#ef4444' },
+  { label: 'Magenta', value: '#ec4899' },
+  { label: 'Mandarine', value: '#f97316' },
+  { label: 'Grün', value: '#22c55e' },
+  { label: 'Aqua', value: '#14b8a6' },
+  { label: 'Sky', value: '#0ea5e9' },
+  { label: 'Honig', value: '#facc15' },
+  { label: 'Graphit', value: '#0f172a' },
+  { label: 'Schiefer', value: '#64748b' },
+];
 
 const CourseEditor = () => {
   const { courseId } = useParams<{ courseId: string }>();
   const navigate = useNavigate();
+  const categoryLabelId = 'course-editor-category-label';
+  const categorySelectId = 'course-editor-category-select';
   const [currentUser, setCurrentUser] = useState<User | null>(auth.currentUser);
   const [course, setCourse] = useState<CourseData | null>(null);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [courseLoading, setCourseLoading] = useState(true);
   const [chaptersLoading, setChaptersLoading] = useState(true);
@@ -118,8 +161,6 @@ const CourseEditor = () => {
   const [chapterDialogMode, setChapterDialogMode] = useState<'create' | 'edit'>('create');
   const [activeChapterId, setActiveChapterId] = useState<string | null>(null);
   const [chapterForm, setChapterForm] = useState<ChapterFormState>(emptyChapterForm);
-  const [chapterCoverFile, setChapterCoverFile] = useState<File | null>(null);
-  const chapterCoverInputRef = useRef<HTMLInputElement>(null);
   const [chapterSaving, setChapterSaving] = useState(false);
   const [expandedChapters, setExpandedChapters] = useState<Set<string>>(new Set());
   const [statusMenu, setStatusMenu] = useState<{ anchorEl: HTMLElement | null; chapterId: string | null }>({
@@ -131,6 +172,20 @@ const CourseEditor = () => {
     chapterId: null,
   });
   const ownerId = currentUser?.uid ?? 'shared';
+  const [coverToolsOpen, setCoverToolsOpen] = useState(false);
+  const [chapterAppearanceOpen, setChapterAppearanceOpen] = useState(false);
+  const [cropDialogOpen, setCropDialogOpen] = useState(false);
+  const [pendingImageFile, setPendingImageFile] = useState<File | null>(null);
+  const [pendingFileName, setPendingFileName] = useState('cover.jpg');
+  const [cropImageSrc, setCropImageSrc] = useState<string | null>(null);
+  const [crop, setCrop] = useState({ x: 0, y: 0 });
+  const [zoom, setZoom] = useState(1);
+  const [croppedAreaPixels, setCroppedAreaPixels] = useState<Area | null>(null);
+  const [cropPreset, setCropPreset] = useState<CropPreset>('square');
+  const cropAspect = useMemo(() => {
+    const preset = cropAspectPresets.find((option) => option.value === cropPreset);
+    return preset?.aspect;
+  }, [cropPreset]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
@@ -138,6 +193,36 @@ const CourseEditor = () => {
     });
     return unsubscribe;
   }, []);
+
+  useEffect(() => {
+    if (!currentUser) {
+      setCategories([]);
+      return undefined;
+    }
+    const categoriesQuery = query(collection(db, 'users', currentUser.uid, 'categories'), orderBy('position', 'asc'));
+    const unsubscribe = onSnapshot(
+      categoriesQuery,
+      (snapshot) => {
+        const orderedCategories = snapshot.docs
+          .map((docSnapshot, index) => {
+            const data = docSnapshot.data();
+            return {
+              id: docSnapshot.id,
+              name: data.name ?? 'Neue Kategorie',
+              showInFilters: data.showInFilters !== false,
+              position: typeof data.position === 'number' ? data.position : index,
+            };
+          })
+          .sort((a, b) => a.position - b.position)
+          .map(({ position, ...category }) => category as Category);
+        setCategories(orderedCategories);
+      },
+      () => {
+        setCategories([]);
+      },
+    );
+    return unsubscribe;
+  }, [currentUser]);
 
   useEffect(() => {
     if (!currentUser || !courseId) {
@@ -163,7 +248,15 @@ const CourseEditor = () => {
             id: snapshot.id,
             title: data.title ?? 'Unbenannter Kurs',
             description: data.description ?? '',
-            coverImageUrl: typeof data.coverImageUrl === 'string' ? data.coverImageUrl : undefined,
+            categoryIds: Array.isArray(data.categoryIds) ? data.categoryIds : [],
+            coverImageUrl:
+              typeof data.coverImageUrl === 'string' && data.coverImageUrl.trim().length > 0
+                ? data.coverImageUrl
+                : undefined,
+            coverColor:
+              typeof data.coverColor === 'string' && data.coverColor.trim().length > 0
+                ? data.coverColor
+                : undefined,
           });
         }
         setCourseLoading(false);
@@ -184,7 +277,10 @@ const CourseEditor = () => {
             title: data.title ?? 'Neues Kapitel',
             description: data.description ?? '',
             status: (data.status as ChapterStatus) ?? 'draft',
-            coverImageUrl: typeof data.coverImageUrl === 'string' ? data.coverImageUrl : undefined,
+            coverColor:
+              typeof data.coverColor === 'string' && data.coverColor.trim().length > 0
+                ? data.coverColor
+                : undefined,
             position: typeof data.position === 'number' ? data.position : index,
           };
         });
@@ -225,6 +321,8 @@ const CourseEditor = () => {
       title: course.title,
       description: course.description,
       coverImageUrl: course.coverImageUrl ?? '',
+      categoryIds: course.categoryIds,
+      coverColor: course.coverColor ?? '',
     });
     setCourseCoverFile(null);
     setPropertiesDialogOpen(true);
@@ -234,9 +332,100 @@ const CourseEditor = () => {
     setCourseForm((prev) => ({ ...prev, [field]: event.target.value }));
   };
 
+  const handleCourseCategoriesChange = (event: SelectChangeEvent<typeof courseForm.categoryIds>) => {
+    const {
+      target: { value },
+    } = event;
+    setCourseForm((prev) => ({
+      ...prev,
+      categoryIds: typeof value === 'string' ? value.split(',') : value,
+    }));
+  };
+
+  const handleSelectCoverColor = (color: string) => {
+    setCourseCoverFile(null);
+    setCourseForm((prev) => ({
+      ...prev,
+      coverColor: color,
+      coverImageUrl: '',
+    }));
+  };
+
+  const handleClearCoverColor = () => {
+    setCourseForm((prev) => ({ ...prev, coverColor: '' }));
+  };
+
+  const openCropDialogForFile = (file: File) => {
+    setPendingImageFile(file);
+    setPendingFileName(file.name || 'course-cover.jpg');
+    const reader = new FileReader();
+    reader.onload = () => {
+      setCropImageSrc(reader.result as string);
+      setCrop({ x: 0, y: 0 });
+      setZoom(1);
+      setCropPreset('square');
+      setCroppedAreaPixels(null);
+      setCropDialogOpen(true);
+    };
+    reader.onerror = () => {
+      setPageError('Bild konnte nicht geladen werden.');
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleApplyCourseCover = (file: File) => {
+    setCourseCoverFile(file);
+    setCourseForm((prev) => ({ ...prev, coverImageUrl: '' }));
+  };
+
+  const resetCropDialog = () => {
+    setCropDialogOpen(false);
+    setCropImageSrc(null);
+    setPendingImageFile(null);
+    setPendingFileName('cover.jpg');
+    setCroppedAreaPixels(null);
+    setCrop({ x: 0, y: 0 });
+    setZoom(1);
+    setCropPreset('square');
+  };
+
+  const handleCloseCropDialog = () => {
+    resetCropDialog();
+  };
+
+  const handleUseOriginalImage = () => {
+    if (!pendingImageFile) {
+      resetCropDialog();
+      return;
+    }
+    handleApplyCourseCover(pendingImageFile);
+    resetCropDialog();
+  };
+
+  const handleConfirmCrop = async () => {
+    if (!croppedAreaPixels || !cropImageSrc) {
+      return;
+    }
+    try {
+      const mimeType = pendingImageFile?.type || 'image/jpeg';
+      const blob = await getCroppedBlob(cropImageSrc, croppedAreaPixels, mimeType);
+      const fileName = pendingFileName || 'cover.jpg';
+      const croppedFile = new File([blob], fileName, { type: mimeType });
+      handleApplyCourseCover(croppedFile);
+      resetCropDialog();
+    } catch (error) {
+      setPageError('Bild konnte nicht zugeschnitten werden.');
+    }
+  };
+
   const handleCourseCoverChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    setCourseCoverFile(file ?? null);
+    if (file) {
+      openCropDialogForFile(file);
+    }
+    if (event.target) {
+      event.target.value = '';
+    }
   };
 
   const uploadCoverImage = async (file: File, path: string) => {
@@ -265,7 +454,9 @@ const CourseEditor = () => {
         {
           title: courseForm.title.trim(),
           description: courseForm.description.trim(),
+          categoryIds: courseForm.categoryIds,
           coverImageUrl: coverUrl,
+          coverColor: courseForm.coverColor.trim(),
           updatedAt: serverTimestamp(),
         },
         { merge: true },
@@ -286,13 +477,12 @@ const CourseEditor = () => {
         title: chapter.title,
         description: chapter.description,
         status: chapter.status,
-        coverImageUrl: chapter.coverImageUrl ?? '',
+        coverColor: chapter.coverColor ?? '',
       });
     } else {
       setActiveChapterId(null);
       setChapterForm(emptyChapterForm);
     }
-    setChapterCoverFile(null);
     setChapterDialogOpen(true);
   };
 
@@ -300,9 +490,12 @@ const CourseEditor = () => {
     setChapterForm((prev) => ({ ...prev, [field]: event.target.value }));
   };
 
-  const handleChapterCoverChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    setChapterCoverFile(file ?? null);
+  const handleSelectChapterColor = (color: string) => {
+    setChapterForm((prev) => ({ ...prev, coverColor: color }));
+  };
+
+  const handleClearChapterColor = () => {
+    setChapterForm((prev) => ({ ...prev, coverColor: '' }));
   };
 
   const saveChapter = async () => {
@@ -318,30 +511,22 @@ const CourseEditor = () => {
     try {
       if (chapterDialogMode === 'create') {
         const newChapterRef = doc(chaptersCollection);
-        let coverUrl = chapterForm.coverImageUrl.trim();
-        if (chapterCoverFile) {
-          coverUrl = await uploadCoverImage(chapterCoverFile, `courseChapters/${ownerId}/${courseRef.id}/${newChapterRef.id}`);
-        }
         await setDoc(newChapterRef, {
           title: chapterForm.title.trim(),
           description: chapterForm.description.trim(),
           status: chapterForm.status,
-          coverImageUrl: coverUrl,
+          coverColor: chapterForm.coverColor.trim(),
           position: chapters.length,
           createdAt: serverTimestamp(),
         });
         setExpandedChapters((prev) => new Set(prev).add(newChapterRef.id));
       } else if (activeChapterId) {
         const chapterRef = doc(chaptersCollection, activeChapterId);
-        let coverUrl = chapterForm.coverImageUrl.trim();
-        if (chapterCoverFile) {
-          coverUrl = await uploadCoverImage(chapterCoverFile, `courseChapters/${ownerId}/${courseRef.id}/${activeChapterId}`);
-        }
         await updateDoc(chapterRef, {
           title: chapterForm.title.trim(),
           description: chapterForm.description.trim(),
           status: chapterForm.status,
-          coverImageUrl: coverUrl,
+          coverColor: chapterForm.coverColor.trim(),
           updatedAt: serverTimestamp(),
         });
       }
@@ -374,7 +559,7 @@ const CourseEditor = () => {
         title: `${chapter.title} Kopie`,
         description: chapter.description,
         status: chapter.status,
-        coverImageUrl: chapter.coverImageUrl ?? '',
+        coverColor: chapter.coverColor ?? '',
         position: chapters.length,
         createdAt: serverTimestamp(),
       });
@@ -430,6 +615,7 @@ const CourseEditor = () => {
   const renderChapterCard = (chapter: Chapter) => {
     const expanded = expandedChapters.has(chapter.id);
     const statusConfig = statusStyles[chapter.status];
+    const avatarColor = chapter.coverColor || 'primary.main';
     return (
       <Paper
         key={chapter.id}
@@ -441,7 +627,7 @@ const CourseEditor = () => {
         }}
       >
         <Stack direction="row" spacing={2} alignItems="center">
-          <Avatar sx={{ width: 56, height: 56, bgcolor: 'primary.main' }}>
+          <Avatar sx={{ width: 56, height: 56, bgcolor: avatarColor, color: '#fff' }}>
             <FolderIcon />
           </Avatar>
           <Box sx={{ flex: 1 }}>
@@ -449,7 +635,18 @@ const CourseEditor = () => {
               {chapter.title}
             </Typography>
             {chapter.description ? (
-              <Typography variant="body2" color="text.secondary">
+              <Typography
+                variant="body2"
+                color="text.secondary"
+                sx={{
+                  wordBreak: 'break-word',
+                  overflowWrap: 'anywhere',
+                  display: '-webkit-box',
+                  WebkitLineClamp: 2,
+                  WebkitBoxOrient: 'vertical',
+                  overflow: 'hidden',
+                }}
+              >
                 {chapter.description}
               </Typography>
             ) : null}
@@ -500,7 +697,15 @@ const CourseEditor = () => {
   }
 
   return (
-    <Box sx={{ p: { xs: 2, md: 4 }, pb: 6 }}>
+    <Box
+      sx={{
+        p: { xs: 2, md: 4 },
+        pb: 6,
+        maxWidth: 1160,
+        mx: 'auto',
+        width: '100%',
+      }}
+    >
       <Breadcrumbs sx={{ mb: 2 }}>
         <Link component={RouterLink} to="/courses" underline="hover" color="inherit">
           Kursübersicht
@@ -609,36 +814,181 @@ const CourseEditor = () => {
               multiline
               minRows={3}
             />
-            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ xs: 'stretch', sm: 'center' }}>
-              <Box sx={{ width: 160, height: 100, borderRadius: 2, bgcolor: 'action.hover', overflow: 'hidden' }}>
-                {courseCoverFile ? (
-                  <Box component="img" src={URL.createObjectURL(courseCoverFile)} alt="Cover Vorschau" sx={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                ) : courseForm.coverImageUrl ? (
-                  <Box component="img" src={courseForm.coverImageUrl} alt="Cover Vorschau" sx={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            <FormControl fullWidth>
+              <InputLabel id={categoryLabelId} shrink>
+                Kategorien
+              </InputLabel>
+              <Select
+                labelId={categoryLabelId}
+                id={categorySelectId}
+                multiple
+                displayEmpty
+                label="Kategorien"
+                value={courseForm.categoryIds}
+                onChange={handleCourseCategoriesChange}
+                renderValue={(selected) => {
+                  const selectedIds = selected as string[];
+                  if (selectedIds.length === 0) {
+                    return 'Keine Kategorie';
+                  }
+                  const labels = selectedIds
+                    .map((id) => categories.find((category) => category.id === id)?.name)
+                    .filter((label): label is string => Boolean(label));
+                  if (labels.length === 0) {
+                    return `${selectedIds.length} Kategorien`;
+                  }
+                  return labels.join(', ');
+                }}
+              >
+                {categories.length === 0 ? (
+                  <MenuItem disabled>Keine Kategorien verfügbar</MenuItem>
                 ) : (
-                  <Stack alignItems="center" justifyContent="center" sx={{ height: '100%' }}>
-                    <CollectionsIcon color="disabled" />
-                  </Stack>
+                  categories.map((category) => (
+                    <MenuItem key={category.id} value={category.id}>
+                      <Checkbox
+                        size="small"
+                        checked={courseForm.categoryIds.includes(category.id)}
+                        sx={{ mr: 1 }}
+                      />
+                      <Typography>{category.name}</Typography>
+                    </MenuItem>
+                  ))
                 )}
-              </Box>
-              <Box>
-                <input
-                  type="file"
-                  accept="image/*"
-                  hidden
-                  ref={courseCoverInputRef}
-                  onChange={handleCourseCoverChange}
-                />
+              </Select>
+            </FormControl>
+            <Box>
+              <Stack direction="row" alignItems="center" justifyContent="space-between" mb={1.5}>
+                <Box>
+                  <Typography variant="subtitle1" fontWeight={600}>
+                    Cover & Darstellung
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Bestimme, wie deine Karte in der Übersicht erscheint.
+                  </Typography>
+                </Box>
                 <Button
-                  variant="outlined"
-                  startIcon={<UploadIcon />}
-                  onClick={() => courseCoverInputRef.current?.click()}
+                  size="small"
+                  endIcon={<KeyboardArrowDownIcon sx={{ transform: coverToolsOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s ease' }} />}
+                  onClick={() => setCoverToolsOpen((prev) => !prev)}
                   sx={{ textTransform: 'none' }}
                 >
-                  Vorschaubild auswählen
+                  {coverToolsOpen ? 'Ausblenden' : 'Anzeigen'}
                 </Button>
-              </Box>
-            </Stack>
+              </Stack>
+              <Collapse in={coverToolsOpen} timeout="auto">
+                <Paper variant="outlined" sx={{ borderRadius: 3, p: { xs: 2, sm: 3 } }}>
+                  <Stack direction={{ xs: 'column', md: 'row' }} spacing={3} alignItems={{ xs: 'stretch', md: 'center' }}>
+                    <Box sx={{ flex: { md: '0 0 220px' } }}>
+                      <Typography variant="subtitle2" gutterBottom color="text.secondary">
+                        
+                      </Typography>
+                      <Box
+                        sx={{
+                          width: '100%',
+                          height: 140,
+                          borderRadius: 2.5,
+                          position: 'relative',
+                          overflow: 'hidden',
+                          background: courseCoverFile || courseForm.coverImageUrl
+                            ? 'action.hover'
+                            : courseForm.coverColor || 'linear-gradient(135deg, #a855f7, #6366f1)',
+                          border: courseForm.coverColor ? `1px solid ${courseForm.coverColor}` : `1px dashed`,
+                          borderColor: courseForm.coverColor || (courseCoverFile || courseForm.coverImageUrl ? 'transparent' : 'divider'),
+                        }}
+                      >
+                        {courseCoverFile ? (
+                          <Box component="img" src={URL.createObjectURL(courseCoverFile)} alt="Cover Vorschau" sx={{ width: '100%', height: '100%', objectFit: 'contain', backgroundColor: 'background.default' }} />
+                        ) : courseForm.coverImageUrl ? (
+                          <Box component="img" src={courseForm.coverImageUrl} alt="Cover Vorschau" sx={{ width: '100%', height: '100%', objectFit: 'contain', backgroundColor: 'background.default' }} />
+                        ) : (
+                          <Stack alignItems="center" justifyContent="center" sx={{ height: '100%' }}>
+                            <CollectionsIcon sx={{ color: courseForm.coverColor ? 'rgba(255,255,255,0.9)' : 'text.disabled' }} />
+                          </Stack>
+                        )}
+                      </Box>
+                    </Box>
+
+                    <Stack spacing={2} flex={1} width="100%">
+                      <Box>
+                        <Typography variant="subtitle2" gutterBottom>
+                          Bild oder Farbfläche
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary" gutterBottom>
+                          Lade ein individuelles Cover hoch oder nutze eine kräftige Farbkachel für schnelle Entwürfe.
+                        </Typography>
+                        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ xs: 'stretch', sm: 'center' }}>
+                          <input type="file" accept="image/*" hidden ref={courseCoverInputRef} onChange={handleCourseCoverChange} />
+                          <Button variant="outlined" startIcon={<UploadIcon />} onClick={() => courseCoverInputRef.current?.click()} sx={{ textTransform: 'none' }}>
+                            Vorschaubild auswählen
+                          </Button>
+                          {courseCoverFile || courseForm.coverImageUrl ? (
+                            <Button
+                              variant="outlined"
+                              color="primary"
+                              onClick={() => {
+                                setCourseCoverFile(null);
+                                setCourseForm((prev) => ({ ...prev, coverImageUrl: '' }));
+                              }}
+                              sx={{ textTransform: 'none' }}
+                            >
+                              Bild entfernen
+                            </Button>
+                          ) : null}
+                        </Stack>
+                        <Typography variant="caption" color="text.secondary" display="block" mt={1}>
+                          Tipp: Quadratische Bilder (z.&nbsp;B. 1024×1024&nbsp;px) füllen die Kurskarte ideal aus.
+                        </Typography>
+                      </Box>
+
+                      <Box>
+                        <Typography variant="subtitle2" gutterBottom>
+                          Farbfläche wählen
+                        </Typography>
+                        <Box
+                          sx={{
+                            display: 'grid',
+                            gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',
+                            gap: 1.5,
+                            justifyItems: 'center',
+                            mb: 1,
+                          }}
+                        >
+                          {coverColorOptions.map(({ label, value, swatch }) => {
+                            const selected = courseForm.coverColor === value;
+                            const swatchColor = (swatch ?? value) || '#1a65ff';
+                            return (
+                              <Tooltip key={value || label} title={label} placement="top" arrow>
+                                <IconButton
+                                  size="small"
+                                  onClick={() => handleSelectCoverColor(value)}
+                                  sx={{
+                                    width: 40,
+                                    height: 40,
+                                    borderRadius: '50%',
+                                    bgcolor: swatchColor,
+                                    border: selected ? '2px solid #fff' : '2px solid rgba(255,255,255,0.4)',
+                                    boxShadow: selected
+                                      ? '0 0 0 2px rgba(26, 101, 255, 0.35)'
+                                      : '0 4px 12px rgba(15, 23, 42, 0.15)',
+                                    transition: 'transform 0.15s ease',
+                                    '&:hover': {
+                                      transform: 'translateY(-1px) scale(1.03)',
+                                    },
+                                  }}
+                                />
+                              </Tooltip>
+                            );
+                          })}
+                        </Box>
+                        <Button size="small" onClick={handleClearCoverColor} sx={{ textTransform: 'none' }}>
+                          Keine Farbe
+                        </Button>
+                      </Box>
+                    </Stack>
+                  </Stack>
+                </Paper>
+              </Collapse>
+            </Box>
           </Stack>
         </DialogContent>
         <DialogActions>
@@ -681,42 +1031,179 @@ const CourseEditor = () => {
                 ))}
               </Select>
             </FormControl>
-            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ xs: 'stretch', sm: 'center' }}>
-              <Box sx={{ width: 160, height: 100, borderRadius: 2, bgcolor: 'action.hover', overflow: 'hidden' }}>
-                {chapterCoverFile ? (
-                  <Box component="img" src={URL.createObjectURL(chapterCoverFile)} alt="Kapitel Cover" sx={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                ) : chapterForm.coverImageUrl ? (
-                  <Box component="img" src={chapterForm.coverImageUrl} alt="Kapitel Cover" sx={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                ) : (
-                  <Stack alignItems="center" justifyContent="center" sx={{ height: '100%' }}>
-                    <CollectionsIcon color="disabled" />
-                  </Stack>
-                )}
-              </Box>
-              <Box>
-                <input
-                  type="file"
-                  accept="image/*"
-                  hidden
-                  ref={chapterCoverInputRef}
-                  onChange={handleChapterCoverChange}
-                />
+            <Box>
+              <Stack direction="row" alignItems="center" justifyContent="space-between" mb={1.5}>
+                <Box>
+                  <Typography variant="subtitle1" fontWeight={600}>
+                    Kapitel-Icon & Farbe
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Steuere die Farbe des Ordners, um Kapitel leichter zu unterscheiden.
+                  </Typography>
+                </Box>
                 <Button
-                  variant="outlined"
-                  startIcon={<UploadIcon />}
-                  onClick={() => chapterCoverInputRef.current?.click()}
+                  size="small"
+                  endIcon={
+                    <KeyboardArrowDownIcon
+                      sx={{
+                        transform: chapterAppearanceOpen ? 'rotate(180deg)' : 'rotate(0deg)',
+                        transition: 'transform 0.2s ease',
+                      }}
+                    />
+                  }
+                  onClick={() => setChapterAppearanceOpen((prev) => !prev)}
                   sx={{ textTransform: 'none' }}
                 >
-                  Vorschaubild auswählen
+                  {chapterAppearanceOpen ? 'Ausblenden' : 'Anzeigen'}
                 </Button>
-              </Box>
-            </Stack>
+              </Stack>
+              <Collapse in={chapterAppearanceOpen} timeout="auto">
+                <Paper variant="outlined" sx={{ borderRadius: 3, p: { xs: 2, sm: 3 } }}>
+                  <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ xs: 'flex-start', sm: 'center' }}>
+                    <Avatar
+                      sx={{
+                        width: 72,
+                        height: 72,
+                        bgcolor: chapterForm.coverColor || 'primary.main',
+                        color: chapterForm.coverColor ? '#fff' : undefined,
+                        boxShadow: '0 10px 30px rgba(15, 23, 42, 0.2)',
+                      }}
+                    >
+                      <FolderIcon />
+                    </Avatar>
+                    <Box flex={1} width="100%">
+                      <Typography variant="subtitle2" gutterBottom>
+                        Farbauswahl
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary" gutterBottom sx={{ mb: 2 }}>
+                        Tippe eine Farbe an, die zur Kapitelstimmung passt.
+                      </Typography>
+                      <Box
+                        sx={{
+                          display: 'grid',
+                          gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',
+                          gap: 1.5,
+                          justifyItems: 'center',
+                          mb: 1,
+                        }}
+                      >
+                        {coverColorOptions.map(({ label, value, swatch }) => {
+                          const selected = chapterForm.coverColor === value;
+                          const swatchColor = (swatch ?? value) || '#1a65ff';
+                          return (
+                            <Tooltip key={value || label} title={label} placement="top" arrow>
+                              <IconButton
+                                size="small"
+                                onClick={() => handleSelectChapterColor(value)}
+                                sx={{
+                                  width: 36,
+                                  height: 36,
+                                  borderRadius: '50%',
+                                  bgcolor: swatchColor,
+                                  border: selected ? '2px solid #fff' : '2px solid rgba(255,255,255,0.4)',
+                                  boxShadow: selected
+                                    ? '0 0 0 2px rgba(26, 101, 255, 0.35)'
+                                    : '0 4px 12px rgba(15, 23, 42, 0.15)',
+                                  transition: 'transform 0.15s ease',
+                                  '&:hover': {
+                                    transform: 'translateY(-1px) scale(1.03)',
+                                  },
+                                }}
+                              />
+                            </Tooltip>
+                          );
+                        })}
+                      </Box>
+                      <Typography variant="caption" color="text.secondary" display="block">
+                        Die gewählte Farbe wird auf der Kapitelliste im Ordner-Icon angezeigt.
+                      </Typography>
+                    </Box>
+                  </Stack>
+                </Paper>
+              </Collapse>
+            </Box>
           </Stack>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setChapterDialogOpen(false)}>Abbrechen</Button>
           <Button onClick={saveChapter} variant="contained" disabled={chapterSaving}>
             {chapterSaving ? 'Speichert...' : chapterDialogMode === 'create' ? 'Erstellen' : 'Speichern'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={cropDialogOpen} onClose={handleCloseCropDialog} maxWidth="md" fullWidth>
+        <DialogTitle>Bild hochladen</DialogTitle>
+        <DialogContent dividers>
+          {cropImageSrc ? (
+            <Box
+              sx={{
+                position: 'relative',
+                width: '100%',
+                height: { xs: 260, sm: 360 },
+                backgroundColor: 'common.black',
+                borderRadius: 2,
+                overflow: 'hidden',
+              }}
+            >
+              <Cropper
+                image={cropImageSrc}
+                crop={crop}
+                zoom={zoom}
+                aspect={cropAspect}
+                onCropChange={setCrop}
+                onZoomChange={(value) => setZoom(value)}
+                onCropComplete={(_, areaPixels) => setCroppedAreaPixels(areaPixels)}
+                restrictPosition={false}
+              />
+            </Box>
+          ) : (
+            <Stack alignItems="center" justifyContent="center" sx={{ height: 260 }}>
+              <CircularProgress size={32} />
+            </Stack>
+          )}
+          <Stack spacing={3} mt={3}>
+            <Box>
+              <Typography variant="subtitle2" gutterBottom>
+                Seitenverhältnis
+              </Typography>
+              <RadioGroup
+                row
+                value={cropPreset}
+                onChange={(event) => setCropPreset(event.target.value as CropPreset)}
+              >
+                {cropAspectPresets.map((preset) => (
+                  <FormControlLabel key={preset.value} value={preset.value} control={<Radio />} label={preset.label} />
+                ))}
+              </RadioGroup>
+            </Box>
+            <Box>
+              <Typography variant="subtitle2" gutterBottom>
+                Zoom
+              </Typography>
+              <Slider
+                min={1}
+                max={3}
+                step={0.01}
+                value={zoom}
+                onChange={(_, value) => setZoom(value as number)}
+                aria-label="Zoom"
+              />
+            </Box>
+          </Stack>
+        </DialogContent>
+        <DialogActions sx={{ flexWrap: 'wrap', gap: 1 }}>
+          {pendingImageFile ? (
+            <Button onClick={handleUseOriginalImage}>Original verwenden</Button>
+          ) : null}
+          <Box sx={{ flex: 1 }} />
+          <Button onClick={handleCloseCropDialog}>Abbrechen</Button>
+          <Button
+            variant="contained"
+            onClick={handleConfirmCrop}
+            disabled={!croppedAreaPixels || !cropImageSrc}
+          >
+            Zuschneiden
           </Button>
         </DialogActions>
       </Dialog>
@@ -781,3 +1268,45 @@ const CourseEditor = () => {
 };
 
 export default CourseEditor;
+
+const createImage = (url: string) =>
+  new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.addEventListener('load', () => resolve(image));
+    image.addEventListener('error', (error) => reject(error));
+    image.setAttribute('crossOrigin', 'anonymous');
+    image.src = url;
+  });
+
+async function getCroppedBlob(imageSrc: string, pixelCrop: Area, mimeType = 'image/jpeg'): Promise<Blob> {
+  const image = await createImage(imageSrc);
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    throw new Error('Canvas konnte nicht initialisiert werden.');
+  }
+  const width = Math.round(pixelCrop.width);
+  const height = Math.round(pixelCrop.height);
+  canvas.width = width;
+  canvas.height = height;
+  ctx.drawImage(
+    image,
+    pixelCrop.x,
+    pixelCrop.y,
+    pixelCrop.width,
+    pixelCrop.height,
+    0,
+    0,
+    width,
+    height,
+  );
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) {
+        resolve(blob);
+      } else {
+        reject(new Error('Bild konnte nicht gerendert werden.'));
+      }
+    }, mimeType, 0.92);
+  });
+}

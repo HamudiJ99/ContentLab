@@ -157,6 +157,7 @@ type Course = {
   duration: string;
   categoryIds: string[];
   coverImageUrl?: string;
+  coverColor?: string;
 };
 
 type CategoryFormState = {
@@ -269,7 +270,14 @@ const Courses = () => {
               lessons: typeof data.lessons === 'number' ? data.lessons : 0,
               duration: typeof data.duration === 'string' ? data.duration : '0:00',
               categoryIds: Array.isArray(data.categoryIds) ? data.categoryIds : [],
-                coverImageUrl: typeof data.coverImageUrl === 'string' ? data.coverImageUrl : undefined,
+              coverImageUrl:
+                typeof data.coverImageUrl === 'string' && data.coverImageUrl.trim().length > 0
+                  ? data.coverImageUrl
+                  : undefined,
+              coverColor:
+                typeof data.coverColor === 'string' && data.coverColor.trim().length > 0
+                  ? data.coverColor
+                  : undefined,
               position: typeof data.position === 'number' ? data.position : Number.MAX_SAFE_INTEGER,
             };
           })
@@ -524,6 +532,7 @@ const Courses = () => {
           duration: '0:00',
           categoryIds: courseForm.categoryIds,
           coverImageUrl: undefined,
+          coverColor: undefined,
         };
         let updatedCourses: Course[] = coursesRef.current;
         updateCourses((prev) => {
@@ -538,6 +547,7 @@ const Courses = () => {
           lessons: newCourse.lessons,
           duration: newCourse.duration,
           coverImageUrl: newCourse.coverImageUrl ?? '',
+          coverColor: newCourse.coverColor ?? '',
           position: 0,
         });
         await persistCourseOrder(updatedCourses);
@@ -882,6 +892,7 @@ const Courses = () => {
                     onEdit={() => handleOpenCourseDialog(course)}
                     onDelete={() => handleDeleteCourse(course.id)}
                     onOpen={() => navigate(`/courses/${course.id}`)}
+                    coverColor={course.coverColor}
                   />
                 </Box>
               );
