@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Box,
   Typography,
@@ -155,6 +156,7 @@ type Course = {
   lessons: number;
   duration: string;
   categoryIds: string[];
+  coverImageUrl?: string;
 };
 
 type CategoryFormState = {
@@ -175,6 +177,7 @@ const emptyCourseForm: CourseFormState = {
 };
 
 const Courses = () => {
+  const navigate = useNavigate();
   const [categories, setCategories] = useState<Category[]>([]);
   const [courses, setCourses] = useState<Course[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -266,6 +269,7 @@ const Courses = () => {
               lessons: typeof data.lessons === 'number' ? data.lessons : 0,
               duration: typeof data.duration === 'string' ? data.duration : '0:00',
               categoryIds: Array.isArray(data.categoryIds) ? data.categoryIds : [],
+                coverImageUrl: typeof data.coverImageUrl === 'string' ? data.coverImageUrl : undefined,
               position: typeof data.position === 'number' ? data.position : Number.MAX_SAFE_INTEGER,
             };
           })
@@ -519,6 +523,7 @@ const Courses = () => {
           lessons: 0,
           duration: '0:00',
           categoryIds: courseForm.categoryIds,
+          coverImageUrl: undefined,
         };
         let updatedCourses: Course[] = coursesRef.current;
         updateCourses((prev) => {
@@ -532,6 +537,7 @@ const Courses = () => {
           chapters: newCourse.chapters,
           lessons: newCourse.lessons,
           duration: newCourse.duration,
+          coverImageUrl: newCourse.coverImageUrl ?? '',
           position: 0,
         });
         await persistCourseOrder(updatedCourses);
@@ -872,8 +878,10 @@ const Courses = () => {
                     chapters={course.chapters}
                     lessons={course.lessons}
                     duration={course.duration}
+                    coverImageUrl={course.coverImageUrl}
                     onEdit={() => handleOpenCourseDialog(course)}
                     onDelete={() => handleDeleteCourse(course.id)}
+                    onOpen={() => navigate(`/courses/${course.id}`)}
                   />
                 </Box>
               );

@@ -6,6 +6,7 @@ import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import Dashboard from './pages/Dashboard';
 import Courses from './pages/Courses';
+import CourseEditor from './pages/CourseEditor';
 import Profile from './pages/Profile';
 import Home from './pages/Home';
 import Members from './pages/Members';
@@ -39,6 +40,7 @@ function App() {
           <Route path="/" element={<Dashboard />} />
           <Route path="/home" element={<Home />} />
           <Route path="/courses" element={<Courses />} />
+          <Route path="/courses/:courseId" element={<CourseEditor />} />
           <Route path="/members" element={<Members />} />
           <Route path="/profile" element={<Profile />} />
         </Route>

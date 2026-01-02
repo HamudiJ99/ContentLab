@@ -20,8 +20,10 @@ export type CourseCardProps = {
   chapters?: number;
   lessons?: number;
   duration?: string;
+  coverImageUrl?: string;
   onEdit?: () => void;
   onDelete?: () => void;
+  onOpen?: () => void;
 };
 
 export default function CourseCard({
@@ -30,8 +32,10 @@ export default function CourseCard({
   chapters,
   lessons,
   duration,
+  coverImageUrl,
   onEdit,
   onDelete,
+  onOpen,
 }: CourseCardProps) {
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const menuOpen = Boolean(anchorEl);
@@ -79,12 +83,17 @@ export default function CourseCard({
         boxShadow: (theme) => (theme.palette.mode === 'light' ? '0 12px 24px rgba(15, 23, 42, 0.08)' : '0 12px 24px rgba(2, 6, 23, 0.65)'),
         background: (theme) => (theme.palette.mode === 'light' ? theme.palette.background.paper : theme.palette.background.default),
         userSelect: 'none',
-        cursor: 'default',
+        cursor: onOpen ? 'pointer' : 'default',
         transition: 'box-shadow 0.2s ease, border-color 0.2s ease',
         '&:hover': {
           boxShadow: (theme) => (theme.palette.mode === 'light' ? '0 16px 28px rgba(15, 23, 42, 0.12)' : '0 16px 32px rgba(2, 6, 23, 0.8)'),
           borderColor: (theme) => theme.palette.primary.main,
         },
+      }}
+      onClick={() => {
+        if (onOpen) {
+          onOpen();
+        }
       }}
     >
       <Box
@@ -92,7 +101,7 @@ export default function CourseCard({
           width: 120,
           minHeight: 120,
           borderRadius: 2,
-          background: 'linear-gradient(135deg, #a855f7, #6366f1)',
+          background: coverImageUrl ? undefined : 'linear-gradient(135deg, #a855f7, #6366f1)',
           position: 'relative',
           overflow: 'hidden',
           display: 'flex',
@@ -100,7 +109,16 @@ export default function CourseCard({
           justifyContent: 'center',
         }}
       >
-        <ImageIcon sx={{ color: 'rgba(255,255,255,0.7)', fontSize: 48, pointerEvents: 'none' }} />
+        {coverImageUrl ? (
+          <Box
+            component="img"
+            src={coverImageUrl}
+            alt={`${title} Cover`}
+            sx={{ width: '100%', height: '100%', objectFit: 'cover' }}
+          />
+        ) : (
+          <ImageIcon sx={{ color: 'rgba(255,255,255,0.7)', fontSize: 48, pointerEvents: 'none' }} />
+        )}
       </Box>
       <Box sx={{ flex: 1 }}>
         <Stack
@@ -132,7 +150,14 @@ export default function CourseCard({
               {description}
             </Typography>
           </Box>
-          <IconButton onClick={handleMenuOpen} aria-label="Kursaktionen" sx={{ flexShrink: 0 }}>
+          <IconButton
+            onClick={(event) => {
+              event.stopPropagation();
+              handleMenuOpen(event);
+            }}
+            aria-label="Kursaktionen"
+            sx={{ flexShrink: 0 }}
+          >
             <MoreVertIcon />
           </IconButton>
         </Stack>
