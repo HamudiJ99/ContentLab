@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Box,
@@ -78,7 +78,7 @@ import HealthAndSafetyIcon from '@mui/icons-material/HealthAndSafety';
 import CourseCard from '../components/CourseCard';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import { auth, db } from '../firebase/firebaseConfig';
-import { collection, deleteDoc, doc, onSnapshot, query, setDoc, writeBatch } from 'firebase/firestore';
+import { collection, deleteDoc, doc, getDocs, onSnapshot, query, setDoc, writeBatch } from 'firebase/firestore';
 
 type IconOption = {
   label: string;
@@ -198,6 +198,7 @@ const Courses = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(auth.currentUser);
   const coursesRef = useRef<Course[]>([]);
   const categoriesRef = useRef<Category[]>([]);
+  const statsSyncedRef = useRef<Record<string, boolean>>({});
 
   const updateCourses = (updater: (prev: Course[]) => Course[]) => {
     setCourses((prev) => {
@@ -301,6 +302,10 @@ const Courses = () => {
     setSelectedCategory('all');
   }, [currentUser]);
 
+  useEffect(() => {
+    statsSyncedRef.current = {};
+  }, [currentUser?.uid]);
+
   const persistCategoryOrder = async (nextCategories: Category[]) => {
     if (!currentUser) {
       return;
@@ -343,6 +348,48 @@ const Courses = () => {
     return canvas;
   }, []);
 
+  const syncCourseStats = useCallback(
+    async (course: Course) => {
+      if (!currentUser) {
+        return;
+      }
+      try {
+        const courseRef = doc(db, 'users', currentUser.uid, 'courses', course.id);
+        const chaptersCollectionRef = collection(courseRef, 'chapters');
+        const chaptersSnapshot = await getDocs(chaptersCollectionRef);
+        const chapterCount = chaptersSnapshot.size;
+        let lessonCount = 0;
+        if (chapterCount > 0) {
+          const lessonCounts = await Promise.all(
+            chaptersSnapshot.docs.map(async (chapterDoc) => {
+              const lessonsCollectionRef = collection(chapterDoc.ref, 'lessons');
+              const lessonsSnapshot = await getDocs(lessonsCollectionRef);
+              return lessonsSnapshot.docs.reduce((total, lessonDoc) => {
+                const data = lessonDoc.data();
+                return data.type === 'subchapter' ? total : total + 1;
+              }, 0);
+            }),
+          );
+          lessonCount = lessonCounts.reduce((total, count) => total + count, 0);
+        }
+        updateCourses((prev) =>
+          prev.map((item) =>
+            item.id === course.id ? { ...item, chapters: chapterCount, lessons: lessonCount } : item,
+          ),
+        );
+        await setDoc(
+          courseRef,
+          { chapters: chapterCount, lessons: lessonCount },
+          { merge: true },
+        );
+      } catch (error) {
+        statsSyncedRef.current[course.id] = false;
+        console.error(`Kurszahlen konnten nicht geladen werden (${course.id})`, error);
+      }
+    },
+    [currentUser, updateCourses],
+  );
+
 
   const filteredCourses = useMemo(() => {
     return courses.filter((course) => {
@@ -363,6 +410,20 @@ const Courses = () => {
     () => categories.filter((category) => category.showInFilters !== false),
     [categories],
   );
+
+  useEffect(() => {
+    courses.forEach((course) => {
+      if (statsSyncedRef.current[course.id]) {
+        return;
+      }
+      if (course.chapters > 0 || course.lessons > 0) {
+        statsSyncedRef.current[course.id] = true;
+        return;
+      }
+      statsSyncedRef.current[course.id] = true;
+      void syncCourseStats(course);
+    });
+  }, [courses, syncCourseStats]);
 
   const handleOpenCategoryDialog = (category?: Category) => {
     if (category) {
@@ -729,7 +790,7 @@ const Courses = () => {
     >
       <Box mb={4}>
         <Typography variant="h4" fontWeight={700} gutterBottom>
-          Meine Kurse
+          Kursübersicht
         </Typography>
         <Typography color="text.secondary">
           Verwalte deine Lerninhalte an einem Ort.

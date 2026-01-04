@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from 'react';
 import { Link as RouterLink, useNavigate, useParams } from 'react-router-dom';
 import {
   Alert,
@@ -6,7 +6,9 @@ import {
   Box,
   Breadcrumbs,
   Button,
+  ButtonBase,
   Checkbox,
+  Chip,
   CircularProgress,
   Collapse,
   Dialog,
@@ -40,17 +42,23 @@ import FolderIcon from '@mui/icons-material/Folder';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import UploadIcon from '@mui/icons-material/Upload';
 import CollectionsIcon from '@mui/icons-material/Collections';
+import PlayCircleOutlineIcon from '@mui/icons-material/PlayCircleOutline';
+import PictureAsPdfOutlinedIcon from '@mui/icons-material/PictureAsPdfOutlined';
+import ArticleOutlinedIcon from '@mui/icons-material/ArticleOutlined';
+import FolderOpenOutlinedIcon from '@mui/icons-material/FolderOpenOutlined';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import {
   collection,
-  deleteDoc,
   doc,
+  getDocs,
+  increment,
   onSnapshot,
   orderBy,
   query,
   serverTimestamp,
   setDoc,
   updateDoc,
+  writeBatch,
 } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { auth, db, storage } from '../firebase/firebaseConfig';
@@ -89,6 +97,16 @@ type Chapter = {
   position: number;
 };
 
+type LessonType = 'subchapter' | 'video' | 'pdf' | 'text';
+
+type Lesson = {
+  id: string;
+  title: string;
+  type: LessonType;
+  parentLessonId?: string | null;
+  position: number;
+};
+
 type CourseFormState = {
   title: string;
   description: string;
@@ -118,6 +136,18 @@ const emptyChapterForm: ChapterFormState = {
   status: 'draft',
   coverColor: '',
 };
+
+type LessonFormState = {
+  title: string;
+  type: LessonType;
+  parentLessonId: string | null;
+};
+
+const emptyLessonForm: LessonFormState = {
+  title: '',
+  type: 'video',
+  parentLessonId: null,
+};
 type CropPreset = 'free' | '3:2' | '16:9' | 'square';
 
 const cropAspectPresets: Array<{ label: string; value: CropPreset; aspect?: number }> = [
@@ -140,6 +170,20 @@ const coverColorOptions: Array<{ label: string; value: string; swatch?: string }
   { label: 'Schiefer', value: '#64748b' },
 ];
 
+const lessonTypeOptions: Array<{ value: LessonType; label: string; icon: ReactNode }> = [
+  { value: 'subchapter', label: 'Unterkapitel', icon: <FolderOpenOutlinedIcon /> },
+  { value: 'video', label: 'Video/Audio', icon: <PlayCircleOutlineIcon /> },
+  { value: 'pdf', label: 'PDF', icon: <PictureAsPdfOutlinedIcon /> },
+  { value: 'text', label: 'Text', icon: <ArticleOutlinedIcon /> },
+];
+
+const lessonTypeConfig: Record<LessonType, { label: string; icon: ReactNode; color: string }> = {
+  subchapter: { label: 'Unterkapitel', icon: <FolderOpenOutlinedIcon fontSize="small" />, color: '#2563eb' },
+  video: { label: 'Video/Audio', icon: <PlayCircleOutlineIcon fontSize="small" />, color: '#0ea5e9' },
+  pdf: { label: 'PDF', icon: <PictureAsPdfOutlinedIcon fontSize="small" />, color: '#ef4444' },
+  text: { label: 'Text', icon: <ArticleOutlinedIcon fontSize="small" />, color: '#a855f7' },
+};
+
 const CourseEditor = () => {
   const { courseId } = useParams<{ courseId: string }>();
   const navigate = useNavigate();
@@ -149,6 +193,7 @@ const CourseEditor = () => {
   const [course, setCourse] = useState<CourseData | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
   const [chapters, setChapters] = useState<Chapter[]>([]);
+  const [lessonsByChapter, setLessonsByChapter] = useState<Record<string, Lesson[]>>({});
   const [courseLoading, setCourseLoading] = useState(true);
   const [chaptersLoading, setChaptersLoading] = useState(true);
   const [pageError, setPageError] = useState<string | null>(null);
@@ -162,6 +207,12 @@ const CourseEditor = () => {
   const [activeChapterId, setActiveChapterId] = useState<string | null>(null);
   const [chapterForm, setChapterForm] = useState<ChapterFormState>(emptyChapterForm);
   const [chapterSaving, setChapterSaving] = useState(false);
+  const lessonListeners = useRef<Record<string, () => void>>({});
+  const hasSyncedCountsRef = useRef(false);
+  const [lessonDialogOpen, setLessonDialogOpen] = useState(false);
+  const [lessonTargetChapterId, setLessonTargetChapterId] = useState<string | null>(null);
+  const [lessonForm, setLessonForm] = useState<LessonFormState>(emptyLessonForm);
+  const [lessonSaving, setLessonSaving] = useState(false);
   const [expandedChapters, setExpandedChapters] = useState<Set<string>>(new Set());
   const [statusMenu, setStatusMenu] = useState<{ anchorEl: HTMLElement | null; chapterId: string | null }>({
     anchorEl: null,
@@ -192,6 +243,13 @@ const CourseEditor = () => {
       setCurrentUser(user);
     });
     return unsubscribe;
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      Object.values(lessonListeners.current).forEach((unsubscribe) => unsubscribe());
+      lessonListeners.current = {};
+    };
   }, []);
 
   useEffect(() => {
@@ -285,6 +343,24 @@ const CourseEditor = () => {
           };
         });
         setChapters(loadedChapters.sort((a, b) => a.position - b.position));
+        const activeChapterIds = new Set(loadedChapters.map((chapter) => chapter.id));
+        setLessonsByChapter((prev) => {
+          const next = { ...prev };
+          let changed = false;
+          Object.keys(next).forEach((chapterId) => {
+            if (!activeChapterIds.has(chapterId)) {
+              delete next[chapterId];
+              changed = true;
+            }
+          });
+          return changed ? next : prev;
+        });
+        Object.keys(lessonListeners.current).forEach((chapterId) => {
+          if (!activeChapterIds.has(chapterId)) {
+            lessonListeners.current[chapterId]?.();
+            delete lessonListeners.current[chapterId];
+          }
+        });
         setChaptersLoading(false);
       },
       () => {
@@ -299,6 +375,14 @@ const CourseEditor = () => {
     };
   }, [currentUser, courseId]);
 
+  useEffect(() => {
+    Object.values(lessonListeners.current).forEach((unsubscribe) => unsubscribe());
+    lessonListeners.current = {};
+    setLessonsByChapter({});
+    setExpandedChapters(new Set());
+    hasSyncedCountsRef.current = false;
+  }, [courseId]);
+
   const courseRef = useMemo(() => {
     if (!currentUser || !courseId) {
       return null;
@@ -312,6 +396,76 @@ const CourseEditor = () => {
     }
     return collection(courseRef, 'chapters');
   }, [courseRef]);
+
+  const refreshCourseAggregates = useCallback(async () => {
+    if (!chaptersCollection || !courseRef) {
+      return;
+    }
+    try {
+      const chaptersSnapshot = await getDocs(chaptersCollection);
+      let lessonsTotal = 0;
+      await Promise.all(
+        chaptersSnapshot.docs.map(async (chapterDoc) => {
+          const lessonsCollectionRef = collection(chapterDoc.ref, 'lessons');
+          const lessonsSnapshot = await getDocs(lessonsCollectionRef);
+          lessonsTotal += lessonsSnapshot.docs.reduce((count, lessonDoc) => {
+            const data = lessonDoc.data();
+            const type = (data.type as LessonType) ?? 'text';
+            return type === 'subchapter' ? count : count + 1;
+          }, 0);
+        }),
+      );
+      await updateDoc(courseRef, {
+        chapters: chaptersSnapshot.size,
+        lessons: lessonsTotal,
+      });
+    } catch (error) {
+      console.error('Kursstatistiken konnten nicht synchronisiert werden', error);
+    }
+  }, [chaptersCollection, courseRef]);
+
+  useEffect(() => {
+    if (!courseRef || !chaptersCollection || hasSyncedCountsRef.current) {
+      return;
+    }
+    hasSyncedCountsRef.current = true;
+    void refreshCourseAggregates();
+  }, [chaptersCollection, courseRef, refreshCourseAggregates]);
+
+  const ensureLessonsListener = useCallback(
+    (chapterId: string) => {
+      if (!chaptersCollection || lessonListeners.current[chapterId]) {
+        return;
+      }
+      const chapterRef = doc(chaptersCollection, chapterId);
+      const lessonsCollectionRef = collection(chapterRef, 'lessons');
+      const lessonsQuery = query(lessonsCollectionRef, orderBy('position', 'asc'));
+      const unsubscribe = onSnapshot(
+        lessonsQuery,
+        (snapshot) => {
+          const lessons: Lesson[] = snapshot.docs.map((docSnapshot, index) => {
+            const data = docSnapshot.data();
+            return {
+              id: docSnapshot.id,
+              title: data.title ?? 'Neue Lektion',
+              type: (data.type as LessonType) ?? 'text',
+              parentLessonId: typeof data.parentLessonId === 'string' ? data.parentLessonId : null,
+              position: typeof data.position === 'number' ? data.position : index,
+            };
+          });
+          setLessonsByChapter((prev) => ({
+            ...prev,
+            [chapterId]: lessons.sort((a, b) => a.position - b.position),
+          }));
+        },
+        () => {
+          setPageError('Lektionen konnten nicht geladen werden.');
+        },
+      );
+      lessonListeners.current[chapterId] = unsubscribe;
+    },
+    [chaptersCollection],
+  );
 
   const handleOpenPropertiesDialog = () => {
     if (!course) {
@@ -486,6 +640,22 @@ const CourseEditor = () => {
     setChapterDialogOpen(true);
   };
 
+  const handleOpenLessonDialog = (chapterId: string, parentLessonId: string | null = null) => {
+    ensureLessonsListener(chapterId);
+    setLessonTargetChapterId(chapterId);
+    setLessonForm({ title: '', type: 'video', parentLessonId });
+    setLessonDialogOpen(true);
+  };
+
+  const handleCloseLessonDialog = () => {
+    if (lessonSaving) {
+      return;
+    }
+    setLessonDialogOpen(false);
+    setLessonTargetChapterId(null);
+    setLessonForm(emptyLessonForm);
+  };
+
   const handleChapterInputChange = (field: keyof ChapterFormState) => (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     setChapterForm((prev) => ({ ...prev, [field]: event.target.value }));
   };
@@ -496,6 +666,10 @@ const CourseEditor = () => {
 
   const handleClearChapterColor = () => {
     setChapterForm((prev) => ({ ...prev, coverColor: '' }));
+  };
+
+  const handleSelectLessonType = (type: LessonType) => {
+    setLessonForm((prev) => ({ ...prev, type }));
   };
 
   const saveChapter = async () => {
@@ -519,7 +693,9 @@ const CourseEditor = () => {
           position: chapters.length,
           createdAt: serverTimestamp(),
         });
+        await updateDoc(courseRef, { chapters: increment(1) });
         setExpandedChapters((prev) => new Set(prev).add(newChapterRef.id));
+        ensureLessonsListener(newChapterRef.id);
       } else if (activeChapterId) {
         const chapterRef = doc(chaptersCollection, activeChapterId);
         await updateDoc(chapterRef, {
@@ -538,12 +714,67 @@ const CourseEditor = () => {
     }
   };
 
+  const handleSaveLesson = async () => {
+    if (!chaptersCollection || !lessonTargetChapterId || !courseRef) {
+      return;
+    }
+    if (!lessonForm.title.trim()) {
+      setPageError('Bitte einen Lektionstitel angeben.');
+      return;
+    }
+    const lessonType = lessonForm.type;
+    setPageError(null);
+    setLessonSaving(true);
+    try {
+      const chapterRef = doc(chaptersCollection, lessonTargetChapterId);
+      const lessonsCollectionRef = collection(chapterRef, 'lessons');
+      const lessonRef = doc(lessonsCollectionRef);
+      await setDoc(lessonRef, {
+        title: lessonForm.title.trim(),
+        type: lessonType,
+        parentLessonId: lessonForm.parentLessonId ?? null,
+        position: Date.now(),
+        createdAt: serverTimestamp(),
+      });
+      if (lessonType !== 'subchapter') {
+        await updateDoc(courseRef, { lessons: increment(1) });
+      }
+      setLessonDialogOpen(false);
+      setLessonForm(emptyLessonForm);
+      setLessonTargetChapterId(null);
+    } catch (error) {
+      setPageError('Lektion konnte nicht gespeichert werden.');
+    } finally {
+      setLessonSaving(false);
+    }
+  };
+
   const handleDeleteChapter = async (chapterId: string) => {
-    if (!chaptersCollection || !window.confirm('Kapitel wirklich löschen?')) {
+    if (!chaptersCollection || !courseRef || !window.confirm('Kapitel wirklich löschen?')) {
       return;
     }
     try {
-      await deleteDoc(doc(chaptersCollection, chapterId));
+      const chapterRef = doc(chaptersCollection, chapterId);
+      const lessonsSnapshot = await getDocs(collection(chapterRef, 'lessons'));
+      const realLessonCount = lessonsSnapshot.docs.reduce((count, lessonDoc) => {
+        const data = lessonDoc.data();
+        const type = (data.type as LessonType) ?? 'text';
+        return type === 'subchapter' ? count : count + 1;
+      }, 0);
+      const batch = writeBatch(db);
+      lessonsSnapshot.docs.forEach((lessonDoc) => {
+        batch.delete(lessonDoc.ref);
+      });
+      batch.delete(chapterRef);
+      await batch.commit();
+      const updates: Record<string, unknown> = {
+        chapters: increment(-1),
+      };
+      if (realLessonCount > 0) {
+        updates.lessons = increment(-realLessonCount);
+      }
+      await updateDoc(courseRef, updates);
+      void refreshCourseAggregates();
     } catch (error) {
       setPageError('Kapitel konnte nicht gelöscht werden.');
     }
@@ -563,7 +794,9 @@ const CourseEditor = () => {
         position: chapters.length,
         createdAt: serverTimestamp(),
       });
+      await updateDoc(courseRef, { chapters: increment(1) });
       setExpandedChapters((prev) => new Set(prev).add(newChapterRef.id));
+      ensureLessonsListener(newChapterRef.id);
     } catch (error) {
       setPageError('Kapitel konnte nicht dupliziert werden.');
     }
@@ -603,6 +836,7 @@ const CourseEditor = () => {
         next.delete(chapterId);
       } else {
         next.add(chapterId);
+        ensureLessonsListener(chapterId);
       }
       return next;
     });
@@ -612,10 +846,53 @@ const CourseEditor = () => {
     setExpandedChapters(new Set());
   };
 
+  const renderLessonCard = (lesson: Lesson) => {
+    const config = lessonTypeConfig[lesson.type] ?? lessonTypeConfig.text;
+    return (
+      <Paper
+        key={lesson.id}
+        variant="outlined"
+        sx={{
+          borderRadius: 2,
+          p: 1.5,
+          backgroundColor: (theme) => (theme.palette.mode === 'dark' ? '#111325' : theme.palette.background.default),
+        }}
+      >
+        <Stack direction="row" spacing={2} alignItems="center">
+          <Avatar
+            variant="rounded"
+            sx={{ width: 48, height: 48, bgcolor: config.color, color: '#fff' }}
+          >
+            {config.icon}
+          </Avatar>
+          <Box sx={{ flex: 1 }}>
+            <Typography fontWeight={600}>{lesson.title}</Typography>
+            <Typography variant="caption" color="text.secondary">
+              {config.label}
+            </Typography>
+          </Box>
+          <Chip label="Entwurf" size="small" sx={{ fontWeight: 600 }} />
+        </Stack>
+      </Paper>
+    );
+  };
+
   const renderChapterCard = (chapter: Chapter) => {
     const expanded = expandedChapters.has(chapter.id);
     const statusConfig = statusStyles[chapter.status];
     const avatarColor = chapter.coverColor || 'primary.main';
+    const lessons = lessonsByChapter[chapter.id] ?? [];
+    const standaloneLessons = lessons.filter((lesson) => lesson.type !== 'subchapter' && !lesson.parentLessonId);
+    const subchapters = lessons.filter((lesson) => lesson.type === 'subchapter');
+    const lessonsByParent = lessons.reduce<Record<string, Lesson[]>>((acc, lesson) => {
+      if (lesson.parentLessonId) {
+        if (!acc[lesson.parentLessonId]) {
+          acc[lesson.parentLessonId] = [];
+        }
+        acc[lesson.parentLessonId].push(lesson);
+      }
+      return acc;
+    }, {});
     return (
       <Paper
         key={chapter.id}
@@ -670,11 +947,83 @@ const CourseEditor = () => {
         {expanded && (
           <Box mt={3}>
             <Divider sx={{ mb: 3 }} />
-            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} justifyContent="space-between" alignItems="center">
-              <Typography variant="body2" color="text.secondary">
+            {standaloneLessons.length > 0 ? (
+              <Stack spacing={1.5} mb={subchapters.length ? 3 : 2}>
+                {standaloneLessons.map((lesson) => renderLessonCard(lesson))}
+              </Stack>
+            ) : null}
+            {subchapters.map((subchapter) => {
+              const children = lessonsByParent[subchapter.id] ?? [];
+              return (
+                <Box key={subchapter.id} mb={2.5}>
+                  <Paper
+                    variant="outlined"
+                    sx={{
+                      borderRadius: 3,
+                      p: 2,
+                      backgroundColor: (theme) => (theme.palette.mode === 'dark' ? '#0f172a' : '#f8fafc'),
+                    }}
+                  >
+                    <Stack
+                      direction={{ xs: 'column', sm: 'row' }}
+                      spacing={1.5}
+                      alignItems={{ xs: 'flex-start', sm: 'center' }}
+                      justifyContent="space-between"
+                    >
+                      <Stack direction="row" spacing={1.5} alignItems="center">
+                        <Avatar sx={{ width: 44, height: 44, bgcolor: lessonTypeConfig.subchapter.color, color: '#fff' }}>
+                          {lessonTypeConfig.subchapter.icon}
+                        </Avatar>
+                        <Box>
+                          <Typography fontWeight={600}>{subchapter.title}</Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            Unterkapitel
+                          </Typography>
+                        </Box>
+                      </Stack>
+                      <Button
+                        startIcon={<AddIcon />}
+                        size="small"
+                        variant="outlined"
+                        sx={{ textTransform: 'none' }}
+                        onClick={() => handleOpenLessonDialog(chapter.id, subchapter.id)}
+                      >
+                        Lektion hinzufügen
+                      </Button>
+                    </Stack>
+                    <Stack spacing={1.25} mt={2}>
+                      {children.length > 0 ? (
+                        children.map((lesson) => renderLessonCard(lesson))
+                      ) : (
+                        <Typography variant="body2" color="text.secondary">
+                          Noch keine Lektionen in diesem Unterkapitel.
+                        </Typography>
+                      )}
+                    </Stack>
+                  </Paper>
+                </Box>
+              );
+            })}
+            {standaloneLessons.length === 0 && subchapters.length === 0 ? (
+              <Typography variant="body2" color="text.secondary" mb={2}>
                 Noch keine Lektionen hinzugefügt.
               </Typography>
-              <Button startIcon={<AddIcon />} variant="outlined" sx={{ textTransform: 'none' }}>
+            ) : null}
+            <Stack
+              direction={{ xs: 'column', sm: 'row' }}
+              spacing={2}
+              justifyContent="space-between"
+              alignItems="center"
+            >
+              <Typography variant="body2" color="text.secondary">
+                Füge neuen Inhalt hinzu, um dieses Kapitel weiter auszuarbeiten.
+              </Typography>
+              <Button
+                startIcon={<AddIcon />}
+                variant="outlined"
+                sx={{ textTransform: 'none' }}
+                onClick={() => handleOpenLessonDialog(chapter.id)}
+              >
                 Lektion hinzufügen
               </Button>
             </Stack>
@@ -1128,6 +1477,67 @@ const CourseEditor = () => {
           <Button onClick={() => setChapterDialogOpen(false)}>Abbrechen</Button>
           <Button onClick={saveChapter} variant="contained" disabled={chapterSaving}>
             {chapterSaving ? 'Speichert...' : chapterDialogMode === 'create' ? 'Erstellen' : 'Speichern'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={lessonDialogOpen} onClose={handleCloseLessonDialog} maxWidth="sm" fullWidth>
+        <DialogTitle>Neue Lektion</DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={3} mt={1}>
+            <TextField
+              label="Name"
+              value={lessonForm.title}
+              onChange={(event) => setLessonForm((prev) => ({ ...prev, title: event.target.value }))}
+              fullWidth
+              autoFocus
+            />
+            <Box>
+              <Typography variant="subtitle2" gutterBottom>
+                Typ
+              </Typography>
+              <Stack direction="row" flexWrap="wrap" useFlexGap spacing={1.5}>
+                {(lessonForm.parentLessonId
+                  ? lessonTypeOptions.filter((option) => option.value !== 'subchapter')
+                  : lessonTypeOptions
+                ).map((option) => {
+                  const selected = lessonForm.type === option.value;
+                  return (
+                    <ButtonBase
+                      key={option.value}
+                      onClick={() => handleSelectLessonType(option.value)}
+                      sx={{
+                        borderRadius: 2.5,
+                        border: selected ? '2px solid #4f46e5' : '1px solid rgba(148, 163, 184, 0.4)',
+                        p: 2,
+                        minWidth: 120,
+                        bgcolor: selected ? 'rgba(79, 70, 229, 0.08)' : 'transparent',
+                        transition: 'all 0.15s ease',
+                      }}
+                    >
+                      <Stack spacing={1} alignItems="center" justifyContent="center">
+                        <Avatar sx={{ width: 40, height: 40, bgcolor: 'rgba(79,70,229,0.12)', color: '#4f46e5' }}>
+                          {option.icon}
+                        </Avatar>
+                        <Typography fontWeight={600}>{option.label}</Typography>
+                      </Stack>
+                    </ButtonBase>
+                  );
+                })}
+              </Stack>
+            </Box>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseLessonDialog} disabled={lessonSaving}>
+            Abbrechen
+          </Button>
+          <Button
+            onClick={handleSaveLesson}
+            variant="contained"
+            disabled={lessonSaving || !lessonForm.title.trim()}
+          >
+            {lessonSaving ? 'Speichert...' : 'Lektion hinzufügen'}
           </Button>
         </DialogActions>
       </Dialog>
