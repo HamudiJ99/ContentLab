@@ -10,6 +10,14 @@
 
     /* Bundler mode */
     "moduleResolution": "bundler",
+    "baseUrl": ".",
+    "resolvePackageJsonExports": false,
+    "resolvePackageJsonImports": false,
+    "paths": {
+      "@dnd-kit/core": ["./node_modules/@dnd-kit/core/dist/index.d.ts"],
+      "@dnd-kit/sortable": ["./node_modules/@dnd-kit/sortable/dist/index.d.ts"],
+      "@dnd-kit/utilities": ["./node_modules/@dnd-kit/utilities/dist/index.d.ts"]
+    },
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "moduleDetection": "force",

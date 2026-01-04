@@ -46,10 +46,13 @@ import PlayCircleOutlineIcon from '@mui/icons-material/PlayCircleOutline';
 import PictureAsPdfOutlinedIcon from '@mui/icons-material/PictureAsPdfOutlined';
 import ArticleOutlinedIcon from '@mui/icons-material/ArticleOutlined';
 import FolderOpenOutlinedIcon from '@mui/icons-material/FolderOpenOutlined';
+import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import {
   collection,
+  deleteDoc,
   doc,
+  getDoc,
   getDocs,
   increment,
   onSnapshot,
@@ -64,11 +67,34 @@ import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { auth, db, storage } from '../firebase/firebaseConfig';
 import Cropper, { type Area } from 'react-easy-crop';
 import 'react-easy-crop/react-easy-crop.css';
+import { DndContext, DragOverlay, PointerSensor, useDroppable, useSensor, useSensors } from '@dnd-kit/core';
+import type { DragEndEvent, DragStartEvent } from '@dnd-kit/core';
+import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 
+const brandStatusColor = '#1a65ff';
 const statusStyles = {
-  published: { label: 'Veröffentlicht', dot: '#22c55e', color: '#22c55e' },
-  draft: { label: 'Entwurf', dot: '#fbbf24', color: '#fbbf24' },
-  disabled: { label: 'Deaktiviert', dot: '#a1a1aa', color: '#a1a1aa' },
+  published: {
+    label: 'Veröffentlicht',
+    dot: '#22c55e',
+    color: brandStatusColor,
+    chipBg: 'rgba(34, 197, 94, 0.15)',
+    chipText: '#15803d',
+  },
+  draft: {
+    label: 'Entwurf',
+    dot: '#1a65ff',
+    color: brandStatusColor,
+    chipBg: 'rgba(26, 101, 255, 0.12)',
+    chipText: '#1a65ff',
+  },
+  disabled: {
+    label: 'Deaktiviert',
+    dot: '#ef4444',
+    color: brandStatusColor,
+    chipBg: 'rgba(239, 68, 68, 0.15)',
+    chipText: '#b91c1c',
+  },
 } as const;
 
 type ChapterStatus = keyof typeof statusStyles;
@@ -99,13 +125,30 @@ type Chapter = {
 
 type LessonType = 'subchapter' | 'video' | 'pdf' | 'text';
 
+type LessonStatus = ChapterStatus;
+
 type Lesson = {
   id: string;
   title: string;
   type: LessonType;
   parentLessonId?: string | null;
   position: number;
+  status?: LessonStatus;
+  shortDescription?: string;
+  content?: string;
 };
+
+const getChapterRootContainerId = (chapterId: string) => `chapter:${chapterId}:root`;
+const getSubchapterContainerId = (chapterId: string, subchapterId: string) => `chapter:${chapterId}:sub:${subchapterId}`;
+
+type LessonContainerMeta = {
+  id: string;
+  chapterId: string;
+  parentLessonId: string | null;
+  lessons: Lesson[];
+};
+
+type LessonContainerOverrides = Record<string, string[]>;
 
 type CourseFormState = {
   title: string;
@@ -148,6 +191,7 @@ const emptyLessonForm: LessonFormState = {
   type: 'video',
   parentLessonId: null,
 };
+
 type CropPreset = 'free' | '3:2' | '16:9' | 'square';
 
 const cropAspectPresets: Array<{ label: string; value: CropPreset; aspect?: number }> = [
@@ -211,6 +255,35 @@ const CourseEditor = () => {
   const hasSyncedCountsRef = useRef(false);
   const [lessonDialogOpen, setLessonDialogOpen] = useState(false);
   const [lessonTargetChapterId, setLessonTargetChapterId] = useState<string | null>(null);
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+  const [draggingChapter, setDraggingChapter] = useState<Chapter | null>(null);
+  const [draggingLesson, setDraggingLesson] = useState<Lesson | null>(null);
+  const lessonContainerMap = useMemo<Record<string, LessonContainerMeta>>(() => {
+    const map: Record<string, LessonContainerMeta> = {};
+    chapters.forEach((chapter) => {
+      const lessons = lessonsByChapter[chapter.id] ?? [];
+      const rootContainerId = getChapterRootContainerId(chapter.id);
+      map[rootContainerId] = {
+        id: rootContainerId,
+        chapterId: chapter.id,
+        parentLessonId: null,
+        lessons: lessons.filter((lesson) => lesson.type !== 'subchapter' && !lesson.parentLessonId),
+      };
+      lessons
+        .filter((lesson) => lesson.type === 'subchapter')
+        .forEach((subchapter) => {
+          const containerId = getSubchapterContainerId(chapter.id, subchapter.id);
+          map[containerId] = {
+            id: containerId,
+            chapterId: chapter.id,
+            parentLessonId: subchapter.id,
+            lessons: lessons.filter((lesson) => lesson.parentLessonId === subchapter.id),
+          };
+        });
+    });
+    return map;
+  }, [chapters, lessonsByChapter]);
+
   const [lessonForm, setLessonForm] = useState<LessonFormState>(emptyLessonForm);
   const [lessonSaving, setLessonSaving] = useState(false);
   const [expandedChapters, setExpandedChapters] = useState<Set<string>>(new Set());
@@ -397,6 +470,7 @@ const CourseEditor = () => {
     return collection(courseRef, 'chapters');
   }, [courseRef]);
 
+
   const refreshCourseAggregates = useCallback(async () => {
     if (!chaptersCollection || !courseRef) {
       return;
@@ -451,6 +525,9 @@ const CourseEditor = () => {
               type: (data.type as LessonType) ?? 'text',
               parentLessonId: typeof data.parentLessonId === 'string' ? data.parentLessonId : null,
               position: typeof data.position === 'number' ? data.position : index,
+              status: (data.status as LessonStatus) ?? 'draft',
+              shortDescription: typeof data.shortDescription === 'string' ? data.shortDescription : '',
+              content: typeof data.content === 'string' ? data.content : '',
             };
           });
           setLessonsByChapter((prev) => ({
@@ -656,6 +733,14 @@ const CourseEditor = () => {
     setLessonForm(emptyLessonForm);
   };
 
+  const handleLessonCardClick = (chapterId: string, lesson: Lesson) => {
+    if (lesson.type !== 'text' || !courseId) {
+      return;
+    }
+    navigate(`/courses/${courseId}/chapters/${chapterId}/lessons/${lesson.id}`);
+  };
+
+
   const handleChapterInputChange = (field: keyof ChapterFormState) => (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     setChapterForm((prev) => ({ ...prev, [field]: event.target.value }));
   };
@@ -664,9 +749,6 @@ const CourseEditor = () => {
     setChapterForm((prev) => ({ ...prev, coverColor: color }));
   };
 
-  const handleClearChapterColor = () => {
-    setChapterForm((prev) => ({ ...prev, coverColor: '' }));
-  };
 
   const handleSelectLessonType = (type: LessonType) => {
     setLessonForm((prev) => ({ ...prev, type }));
@@ -729,13 +811,19 @@ const CourseEditor = () => {
       const chapterRef = doc(chaptersCollection, lessonTargetChapterId);
       const lessonsCollectionRef = collection(chapterRef, 'lessons');
       const lessonRef = doc(lessonsCollectionRef);
-      await setDoc(lessonRef, {
+      const newLessonData: Record<string, unknown> = {
         title: lessonForm.title.trim(),
         type: lessonType,
         parentLessonId: lessonForm.parentLessonId ?? null,
         position: Date.now(),
         createdAt: serverTimestamp(),
-      });
+        status: 'draft',
+        shortDescription: '',
+      };
+      if (lessonType === 'text') {
+        newLessonData.content = '';
+      }
+      await setDoc(lessonRef, newLessonData);
       if (lessonType !== 'subchapter') {
         await updateDoc(courseRef, { lessons: increment(1) });
       }
@@ -846,192 +934,272 @@ const CourseEditor = () => {
     setExpandedChapters(new Set());
   };
 
-  const renderLessonCard = (lesson: Lesson) => {
-    const config = lessonTypeConfig[lesson.type] ?? lessonTypeConfig.text;
-    return (
-      <Paper
-        key={lesson.id}
-        variant="outlined"
-        sx={{
-          borderRadius: 2,
-          p: 1.5,
-          backgroundColor: (theme) => (theme.palette.mode === 'dark' ? '#111325' : theme.palette.background.default),
-        }}
-      >
-        <Stack direction="row" spacing={2} alignItems="center">
-          <Avatar
-            variant="rounded"
-            sx={{ width: 48, height: 48, bgcolor: config.color, color: '#fff' }}
-          >
-            {config.icon}
-          </Avatar>
-          <Box sx={{ flex: 1 }}>
-            <Typography fontWeight={600}>{lesson.title}</Typography>
-            <Typography variant="caption" color="text.secondary">
-              {config.label}
-            </Typography>
-          </Box>
-          <Chip label="Entwurf" size="small" sx={{ fontWeight: 600 }} />
-        </Stack>
-      </Paper>
-    );
+  const handleDragStart = (event: DragStartEvent) => {
+    const activeData = event.active.data.current;
+    if (!activeData) {
+      return;
+    }
+    if (activeData.type === 'chapter') {
+      setDraggingChapter(activeData.chapter as Chapter);
+    } else if (activeData.type === 'lesson') {
+      setDraggingLesson(activeData.lesson as Lesson);
+    }
   };
 
-  const renderChapterCard = (chapter: Chapter) => {
-    const expanded = expandedChapters.has(chapter.id);
-    const statusConfig = statusStyles[chapter.status];
-    const avatarColor = chapter.coverColor || 'primary.main';
-    const lessons = lessonsByChapter[chapter.id] ?? [];
-    const standaloneLessons = lessons.filter((lesson) => lesson.type !== 'subchapter' && !lesson.parentLessonId);
-    const subchapters = lessons.filter((lesson) => lesson.type === 'subchapter');
-    const lessonsByParent = lessons.reduce<Record<string, Lesson[]>>((acc, lesson) => {
-      if (lesson.parentLessonId) {
-        if (!acc[lesson.parentLessonId]) {
-          acc[lesson.parentLessonId] = [];
-        }
-        acc[lesson.parentLessonId].push(lesson);
-      }
-      return acc;
-    }, {});
-    return (
-      <Paper
-        key={chapter.id}
-        variant="outlined"
-        sx={{
-          borderRadius: 3,
-          p: 3,
-          backgroundColor: (theme) => (theme.palette.mode === 'dark' ? '#111325' : theme.palette.background.paper),
-        }}
-      >
-        <Stack direction="row" spacing={2} alignItems="center">
-          <Avatar sx={{ width: 56, height: 56, bgcolor: avatarColor, color: '#fff' }}>
-            <FolderIcon />
-          </Avatar>
-          <Box sx={{ flex: 1 }}>
-            <Typography variant="h6" fontWeight={700} gutterBottom>
-              {chapter.title}
-            </Typography>
-            {chapter.description ? (
-              <Typography
-                variant="body2"
-                color="text.secondary"
-                sx={{
-                  wordBreak: 'break-word',
-                  overflowWrap: 'anywhere',
-                  display: '-webkit-box',
-                  WebkitLineClamp: 2,
-                  WebkitBoxOrient: 'vertical',
-                  overflow: 'hidden',
-                }}
-              >
-                {chapter.description}
-              </Typography>
-            ) : null}
-          </Box>
-          <Button
-            variant="outlined"
-            size="small"
-            onClick={(event) => handleStatusMenuOpen(chapter.id, event.currentTarget)}
-            startIcon={<Box sx={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: statusConfig.dot }} />}
-            sx={{ textTransform: 'none', borderColor: 'rgba(255,255,255,0.08)' }}
-          >
-            {statusConfig.label}
-          </Button>
-          <IconButton onClick={() => toggleChapter(chapter.id)}>
-            {expanded ? <KeyboardArrowUpIcon /> : <KeyboardArrowDownIcon />}
-          </IconButton>
-          <IconButton onClick={(event) => handleActionsMenuOpen(chapter.id, event.currentTarget)}>
-            <MoreVertIcon />
-          </IconButton>
-        </Stack>
-        {expanded && (
-          <Box mt={3}>
-            <Divider sx={{ mb: 3 }} />
-            {standaloneLessons.length > 0 ? (
-              <Stack spacing={1.5} mb={subchapters.length ? 3 : 2}>
-                {standaloneLessons.map((lesson) => renderLessonCard(lesson))}
-              </Stack>
-            ) : null}
-            {subchapters.map((subchapter) => {
-              const children = lessonsByParent[subchapter.id] ?? [];
-              return (
-                <Box key={subchapter.id} mb={2.5}>
-                  <Paper
-                    variant="outlined"
-                    sx={{
-                      borderRadius: 3,
-                      p: 2,
-                      backgroundColor: (theme) => (theme.palette.mode === 'dark' ? '#0f172a' : '#f8fafc'),
-                    }}
-                  >
-                    <Stack
-                      direction={{ xs: 'column', sm: 'row' }}
-                      spacing={1.5}
-                      alignItems={{ xs: 'flex-start', sm: 'center' }}
-                      justifyContent="space-between"
-                    >
-                      <Stack direction="row" spacing={1.5} alignItems="center">
-                        <Avatar sx={{ width: 44, height: 44, bgcolor: lessonTypeConfig.subchapter.color, color: '#fff' }}>
-                          {lessonTypeConfig.subchapter.icon}
-                        </Avatar>
-                        <Box>
-                          <Typography fontWeight={600}>{subchapter.title}</Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            Unterkapitel
-                          </Typography>
-                        </Box>
-                      </Stack>
-                      <Button
-                        startIcon={<AddIcon />}
-                        size="small"
-                        variant="outlined"
-                        sx={{ textTransform: 'none' }}
-                        onClick={() => handleOpenLessonDialog(chapter.id, subchapter.id)}
-                      >
-                        Lektion hinzufügen
-                      </Button>
-                    </Stack>
-                    <Stack spacing={1.25} mt={2}>
-                      {children.length > 0 ? (
-                        children.map((lesson) => renderLessonCard(lesson))
-                      ) : (
-                        <Typography variant="body2" color="text.secondary">
-                          Noch keine Lektionen in diesem Unterkapitel.
-                        </Typography>
-                      )}
-                    </Stack>
-                  </Paper>
-                </Box>
-              );
-            })}
-            {standaloneLessons.length === 0 && subchapters.length === 0 ? (
-              <Typography variant="body2" color="text.secondary" mb={2}>
-                Noch keine Lektionen hinzugefügt.
-              </Typography>
-            ) : null}
-            <Stack
-              direction={{ xs: 'column', sm: 'row' }}
-              spacing={2}
-              justifyContent="space-between"
-              alignItems="center"
-            >
-              <Typography variant="body2" color="text.secondary">
-                Füge neuen Inhalt hinzu, um dieses Kapitel weiter auszuarbeiten.
-              </Typography>
-              <Button
-                startIcon={<AddIcon />}
-                variant="outlined"
-                sx={{ textTransform: 'none' }}
-                onClick={() => handleOpenLessonDialog(chapter.id)}
-              >
-                Lektion hinzufügen
-              </Button>
-            </Stack>
-          </Box>
-        )}
-      </Paper>
-    );
+  const handleDragCancel = () => {
+    setDraggingChapter(null);
+    setDraggingLesson(null);
   };
+
+  const persistChapterPositions = async (orderedChapters: Chapter[]) => {
+    if (!courseRef) {
+      return;
+    }
+    const batch = writeBatch(db);
+    orderedChapters.forEach((chapter, index) => {
+      batch.update(doc(courseRef, 'chapters', chapter.id), { position: index });
+    });
+    await batch.commit();
+  };
+
+  const handleChapterReorder = async (activeId: string, overId: string) => {
+    if (activeId === overId) {
+      return;
+    }
+    const oldIndex = chapters.findIndex((chapter) => chapter.id === activeId);
+    const newIndex = chapters.findIndex((chapter) => chapter.id === overId);
+    if (oldIndex === -1 || newIndex === -1) {
+      return;
+    }
+    const reordered = arrayMove(chapters, oldIndex, newIndex);
+    setChapters(reordered);
+    try {
+      await persistChapterPositions(reordered);
+    } catch (error) {
+      setPageError('Kapitelreihenfolge konnte nicht gespeichert werden.');
+    }
+  };
+
+  const buildChapterOrder = (
+    chapterId: string,
+    overrides: LessonContainerOverrides,
+    injectedLessons: Lesson[],
+    removedLessonIds: string[],
+  ) => {
+    const baseLessons = lessonsByChapter[chapterId] ?? [];
+    const filteredLessons = baseLessons.filter((lesson) => !removedLessonIds.includes(lesson.id));
+    const combinedLessons = [...filteredLessons];
+    injectedLessons.forEach((lesson) => {
+      if (!combinedLessons.some((existing) => existing.id === lesson.id)) {
+        combinedLessons.push(lesson);
+      }
+    });
+    combinedLessons.sort((a, b) => a.position - b.position);
+    const rootContainerId = getChapterRootContainerId(chapterId);
+    const rootIds = overrides[rootContainerId] ?? combinedLessons
+      .filter((lesson) => lesson.type !== 'subchapter' && !lesson.parentLessonId)
+      .map((lesson) => lesson.id);
+    const subchapters = combinedLessons.filter((lesson) => lesson.type === 'subchapter');
+    const flattenIds: string[] = [...rootIds];
+    subchapters.forEach((subchapter) => {
+      flattenIds.push(subchapter.id);
+      const containerId = getSubchapterContainerId(chapterId, subchapter.id);
+      const originalChildren = combinedLessons.filter((lesson) => lesson.parentLessonId === subchapter.id);
+      const childIds = overrides[containerId] ?? originalChildren.map((lesson) => lesson.id);
+      flattenIds.push(...childIds);
+    });
+    combinedLessons
+      .map((lesson) => lesson.id)
+      .filter((id) => !flattenIds.includes(id))
+      .forEach((id) => flattenIds.push(id));
+    return flattenIds;
+  };
+
+  const persistChapterLessonOrder = async ({
+    chapterId,
+    overrides = {},
+    parentOverrides = {},
+    injectedLessons = [],
+    removedLessonIds = [],
+  }: {
+    chapterId: string;
+    overrides?: LessonContainerOverrides;
+    parentOverrides?: Record<string, string | null>;
+    injectedLessons?: Lesson[];
+    removedLessonIds?: string[];
+  }) => {
+    if (!courseRef) {
+      return;
+    }
+    const orderedIds = buildChapterOrder(chapterId, overrides, injectedLessons, removedLessonIds);
+    const chapterRef = doc(courseRef, 'chapters', chapterId);
+    const batch = writeBatch(db);
+    orderedIds.forEach((lessonId, index) => {
+      const lessonRef = doc(chapterRef, 'lessons', lessonId);
+      const payload: Record<string, unknown> = { position: index };
+      if (lessonId in parentOverrides) {
+        payload.parentLessonId = parentOverrides[lessonId];
+      }
+      batch.update(lessonRef, payload);
+    });
+    await batch.commit();
+  };
+
+  const moveLessonBetweenChapters = async ({
+    lessonId,
+    sourceChapterId,
+    targetChapterId,
+    targetParentLessonId,
+    sourceOverrides,
+    targetOverrides,
+  }: {
+    lessonId: string;
+    sourceChapterId: string;
+    targetChapterId: string;
+    targetParentLessonId: string | null;
+    sourceOverrides: LessonContainerOverrides;
+    targetOverrides: LessonContainerOverrides;
+  }) => {
+    if (!courseRef) {
+      return;
+    }
+    const sourceChapterRef = doc(courseRef, 'chapters', sourceChapterId);
+    const sourceLessonRef = doc(sourceChapterRef, 'lessons', lessonId);
+    const snapshot = await getDoc(sourceLessonRef);
+    if (!snapshot.exists()) {
+      return;
+    }
+    const data = snapshot.data();
+    const convertedLesson: Lesson = {
+      id: lessonId,
+      title: typeof data.title === 'string' ? data.title : 'Neue Lektion',
+      type: (data.type as LessonType) ?? 'text',
+      parentLessonId: typeof data.parentLessonId === 'string' ? data.parentLessonId : null,
+      position: typeof data.position === 'number' ? data.position : 0,
+      status: (data.status as LessonStatus) ?? 'draft',
+      shortDescription: typeof data.shortDescription === 'string' ? data.shortDescription : '',
+      content: typeof data.content === 'string' ? data.content : '',
+    };
+    const targetChapterRef = doc(courseRef, 'chapters', targetChapterId);
+    const targetLessonRef = doc(targetChapterRef, 'lessons', lessonId);
+    await setDoc(targetLessonRef, {
+      ...data,
+      parentLessonId: targetParentLessonId ?? null,
+      position: 0,
+    });
+    await deleteDoc(sourceLessonRef);
+    await persistChapterLessonOrder({
+      chapterId: sourceChapterId,
+      overrides: sourceOverrides,
+      removedLessonIds: [lessonId],
+    });
+    await persistChapterLessonOrder({
+      chapterId: targetChapterId,
+      overrides: targetOverrides,
+      parentOverrides: { [lessonId]: targetParentLessonId },
+      injectedLessons: [{ ...convertedLesson, parentLessonId: targetParentLessonId ?? null }],
+    });
+  };
+
+  const handleLessonDrop = async ({ active, over }: DragEndEvent) => {
+    if (!over) {
+      return;
+    }
+    const activeData = active.data.current;
+    const overData = over.data.current;
+    if (!activeData || activeData.type !== 'lesson') {
+      return;
+    }
+    const destinationContainerId =
+      overData?.type === 'lesson'
+        ? (overData.containerId as string)
+        : overData?.type === 'lesson-container'
+          ? (overData.containerId as string)
+          : null;
+    if (!destinationContainerId) {
+      return;
+    }
+    const sourceContainerId = activeData.containerId as string;
+    const sourceMeta = lessonContainerMap[sourceContainerId];
+    const targetMeta = lessonContainerMap[destinationContainerId];
+    if (!sourceMeta || !targetMeta) {
+      return;
+    }
+    if (destinationContainerId === sourceContainerId && over.id === active.id) {
+      return;
+    }
+    const sourceIds = sourceMeta.lessons.map((lesson) => lesson.id);
+    const targetIds =
+      destinationContainerId === sourceContainerId ? sourceIds : targetMeta.lessons.map((lesson) => lesson.id);
+    const activeIndex = sourceIds.indexOf(active.id as string);
+    if (activeIndex === -1) {
+      return;
+    }
+    let rawTargetIndex: number;
+    if (overData?.type === 'lesson') {
+      rawTargetIndex = targetIds.indexOf(over.id as string);
+      if (rawTargetIndex === -1) {
+        rawTargetIndex = targetIds.length;
+      }
+    } else {
+      rawTargetIndex = targetIds.length;
+    }
+    const updatedSourceIds = [...sourceIds];
+    updatedSourceIds.splice(activeIndex, 1);
+    const baseTargetIds = destinationContainerId === sourceContainerId ? updatedSourceIds : [...targetIds];
+    const targetIndex = Math.min(rawTargetIndex, baseTargetIds.length);
+    const updatedTargetIds = [...baseTargetIds];
+    updatedTargetIds.splice(targetIndex, 0, active.id as string);
+    try {
+      if (sourceMeta.chapterId === targetMeta.chapterId) {
+        if (destinationContainerId === sourceContainerId) {
+          if (sourceIds.join('|') === updatedTargetIds.join('|')) {
+            return;
+          }
+          const parentOverride =
+            sourceMeta.parentLessonId === targetMeta.parentLessonId
+              ? {}
+              : { [active.id as string]: targetMeta.parentLessonId };
+          await persistChapterLessonOrder({
+            chapterId: sourceMeta.chapterId,
+            overrides: { [sourceContainerId]: updatedTargetIds },
+            parentOverrides: parentOverride,
+          });
+        } else {
+          await persistChapterLessonOrder({
+            chapterId: sourceMeta.chapterId,
+            overrides: {
+              [sourceContainerId]: updatedSourceIds,
+              [destinationContainerId]: updatedTargetIds,
+            },
+            parentOverrides: { [active.id as string]: targetMeta.parentLessonId },
+          });
+        }
+      } else {
+        await moveLessonBetweenChapters({
+          lessonId: active.id as string,
+          sourceChapterId: sourceMeta.chapterId,
+          targetChapterId: targetMeta.chapterId,
+          targetParentLessonId: targetMeta.parentLessonId,
+          sourceOverrides: { [sourceContainerId]: updatedSourceIds },
+          targetOverrides: { [destinationContainerId]: updatedTargetIds },
+        });
+      }
+    } catch (error) {
+      setPageError('Verschieben der Lektion ist fehlgeschlagen.');
+    }
+  };
+
+  const handleDragEnd = async (event: DragEndEvent) => {
+    const type = event.active.data.current?.type;
+    if (type === 'chapter' && event.over) {
+      await handleChapterReorder(event.active.id as string, event.over.id as string);
+    } else if (type === 'lesson') {
+      await handleLessonDrop(event);
+    }
+    handleDragCancel();
+  };
+
 
   if (!courseId) {
     return null;
@@ -1132,9 +1300,52 @@ const CourseEditor = () => {
               
             </Paper>
           ) : (
-            <Stack spacing={2.5}>
-              {chapters.map((chapter) => renderChapterCard(chapter))}
-            </Stack>
+            <DndContext
+              sensors={sensors}
+              onDragStart={handleDragStart}
+              onDragEnd={handleDragEnd}
+              onDragCancel={handleDragCancel}
+            >
+              <SortableContext items={chapters.map((chapter) => chapter.id)} strategy={verticalListSortingStrategy}>
+                <Stack spacing={2.5}>
+                  {chapters.map((chapter) => (
+                    <ChapterCard
+                      key={chapter.id}
+                      chapter={chapter}
+                      expanded={expandedChapters.has(chapter.id)}
+                      onToggle={toggleChapter}
+                      onStatusMenuOpen={handleStatusMenuOpen}
+                      onActionsMenuOpen={handleActionsMenuOpen}
+                      lessons={lessonsByChapter[chapter.id] ?? []}
+                      onLessonClick={handleLessonCardClick}
+                      onAddLesson={handleOpenLessonDialog}
+                    />
+                  ))}
+                </Stack>
+              </SortableContext>
+              <DragOverlay>
+                {draggingChapter ? (
+                  <Paper
+                    sx={{
+                      p: 2,
+                      borderRadius: 3,
+                      minWidth: 320,
+                      backgroundColor: (theme) =>
+                        theme.palette.mode === 'dark' ? '#111325' : theme.palette.background.paper,
+                    }}
+                  >
+                    <Stack direction="row" spacing={2} alignItems="center">
+                      <Avatar sx={{ width: 48, height: 48, bgcolor: draggingChapter.coverColor || 'primary.main', color: '#fff' }}>
+                        <FolderIcon />
+                      </Avatar>
+                      <Typography fontWeight={600}>{draggingChapter.title}</Typography>
+                    </Stack>
+                  </Paper>
+                ) : draggingLesson ? (
+                  <LessonDragPreview lesson={draggingLesson} />
+                ) : null}
+              </DragOverlay>
+            </DndContext>
           )}
 
          
@@ -1149,7 +1360,6 @@ const CourseEditor = () => {
           </Button>
         </Paper>
       )}
-
       <Dialog open={propertiesDialogOpen} onClose={() => setPropertiesDialogOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle>Kursspezifische Eigenschaften</DialogTitle>
         <DialogContent dividers>
@@ -1674,6 +1884,386 @@ const CourseEditor = () => {
         </MenuItem>
       </Menu>
     </Box>
+  );
+};
+
+type LessonContainerProps = {
+  containerId: string;
+  chapterId: string;
+  parentLessonId: string | null;
+  lessons: Lesson[];
+  children: (lessons: Lesson[]) => ReactNode;
+};
+
+const LessonContainer = ({ containerId, chapterId, parentLessonId, lessons, children }: LessonContainerProps) => {
+  const { setNodeRef, isOver } = useDroppable({
+    id: containerId,
+    data: { type: 'lesson-container', containerId, chapterId, parentLessonId },
+  });
+  return (
+    <SortableContext items={lessons.map((lesson) => lesson.id)} strategy={verticalListSortingStrategy}>
+      <Box
+        ref={setNodeRef}
+        sx={{
+          border: isOver ? '1px dashed #1d8bf2' : '1px dashed transparent',
+          borderRadius: 2,
+          transition: 'border 0.15s ease',
+          p: isOver ? 1 : 0,
+        }}
+      >
+        {children(lessons)}
+      </Box>
+    </SortableContext>
+  );
+};
+
+const LessonDropPlaceholder = ({ label }: { label: string }) => (
+  <Paper
+    variant="outlined"
+    sx={{
+      borderRadius: 2,
+      borderStyle: 'dashed',
+      borderColor: 'rgba(148, 163, 184, 0.6)',
+      color: 'text.secondary',
+      textAlign: 'center',
+      py: 1.5,
+      px: 1,
+      backgroundColor: 'transparent',
+    }}
+  >
+    {label}
+  </Paper>
+);
+
+type SortableLessonCardProps = {
+  lesson: Lesson;
+  chapterId: string;
+  containerId: string;
+  onLessonClick: (chapterId: string, lesson: Lesson) => void;
+};
+
+const SortableLessonCard = ({ lesson, chapterId, containerId, onLessonClick }: SortableLessonCardProps) => {
+  const typeConfig = lessonTypeConfig[lesson.type] ?? lessonTypeConfig.text;
+  const lessonStatus = (lesson.status as LessonStatus) ?? 'draft';
+  const statusConfig = statusStyles[lessonStatus];
+  const isTextLesson = lesson.type === 'text';
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: lesson.id,
+    data: {
+      type: 'lesson',
+      lesson,
+      containerId,
+      chapterId,
+      parentLessonId: lesson.parentLessonId ?? null,
+    },
+  });
+  return (
+    <Paper
+      ref={setNodeRef}
+      variant="outlined"
+      sx={{
+        borderRadius: 2,
+        p: 1.5,
+        backgroundColor: (theme) => (theme.palette.mode === 'dark' ? '#111325' : theme.palette.background.default),
+        cursor: isTextLesson ? 'pointer' : 'default',
+        opacity: isDragging ? 0.6 : 1,
+        transform: CSS.Transform.toString(transform),
+        transition,
+      }}
+      onClick={isTextLesson ? () => onLessonClick(chapterId, lesson) : undefined}
+    >
+      <Stack direction="row" spacing={2} alignItems="center">
+        <Avatar variant="rounded" sx={{ width: 48, height: 48, bgcolor: typeConfig.color, color: '#fff' }}>
+          {typeConfig.icon}
+        </Avatar>
+        <Box sx={{ flex: 1 }}>
+          <Typography fontWeight={600}>{lesson.title}</Typography>
+          <Typography variant="caption" color="text.secondary">
+            {typeConfig.label}
+          </Typography>
+          {lesson.shortDescription ? (
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+              {lesson.shortDescription}
+            </Typography>
+          ) : null}
+        </Box>
+        <Chip
+          label={statusConfig.label}
+          size="small"
+          sx={{
+            fontWeight: 600,
+            color: statusConfig.chipText,
+            backgroundColor: statusConfig.chipBg,
+            borderRadius: 16,
+            px: 1.25,
+          }}
+        />
+        <IconButton size="small" {...attributes} {...listeners} sx={{ cursor: 'grab' }}>
+          <DragIndicatorIcon fontSize="small" />
+        </IconButton>
+      </Stack>
+    </Paper>
+  );
+};
+
+const LessonDragPreview = ({ lesson }: { lesson: Lesson }) => {
+  const typeConfig = lessonTypeConfig[lesson.type] ?? lessonTypeConfig.text;
+  const lessonStatus = (lesson.status as LessonStatus) ?? 'draft';
+  const statusConfig = statusStyles[lessonStatus];
+  return (
+    <Paper
+      variant="outlined"
+      sx={{
+        borderRadius: 2,
+        p: 1.5,
+        width: 320,
+        backgroundColor: (theme) => (theme.palette.mode === 'dark' ? '#111325' : theme.palette.background.default),
+      }}
+    >
+      <Stack direction="row" spacing={2} alignItems="center">
+        <Avatar variant="rounded" sx={{ width: 48, height: 48, bgcolor: typeConfig.color, color: '#fff' }}>
+          {typeConfig.icon}
+        </Avatar>
+        <Box sx={{ flex: 1 }}>
+          <Typography fontWeight={600}>{lesson.title}</Typography>
+          <Typography variant="caption" color="text.secondary">
+            {typeConfig.label}
+          </Typography>
+        </Box>
+        <Chip
+          label={statusConfig.label}
+          size="small"
+          sx={{
+            fontWeight: 600,
+            color: statusConfig.chipText,
+            backgroundColor: statusConfig.chipBg,
+            borderRadius: 16,
+            px: 1.25,
+          }}
+        />
+      </Stack>
+    </Paper>
+  );
+};
+
+type ChapterCardProps = {
+  chapter: Chapter;
+  expanded: boolean;
+  onToggle: (chapterId: string) => void;
+  onStatusMenuOpen: (chapterId: string, anchorEl: HTMLElement) => void;
+  onActionsMenuOpen: (chapterId: string, anchorEl: HTMLElement) => void;
+  lessons: Lesson[];
+  onLessonClick: (chapterId: string, lesson: Lesson) => void;
+  onAddLesson: (chapterId: string, parentLessonId?: string | null) => void;
+};
+
+const ChapterCard = ({
+  chapter,
+  expanded,
+  onToggle,
+  onStatusMenuOpen,
+  onActionsMenuOpen,
+  lessons,
+  onLessonClick,
+  onAddLesson,
+}: ChapterCardProps) => {
+  const statusConfig = statusStyles[chapter.status];
+  const avatarColor = chapter.coverColor || 'primary.main';
+  const standaloneLessons = lessons.filter((lesson) => lesson.type !== 'subchapter' && !lesson.parentLessonId);
+  const subchapters = lessons.filter((lesson) => lesson.type === 'subchapter');
+  const lessonsByParent = lessons.reduce<Record<string, Lesson[]>>((acc, lesson) => {
+    if (lesson.parentLessonId) {
+      if (!acc[lesson.parentLessonId]) {
+        acc[lesson.parentLessonId] = [];
+      }
+      acc[lesson.parentLessonId].push(lesson);
+    }
+    return acc;
+  }, {});
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: chapter.id,
+    data: { type: 'chapter', chapter },
+  });
+  return (
+    <Paper
+      ref={setNodeRef}
+      variant="outlined"
+      sx={{
+        borderRadius: 3,
+        p: 3,
+        backgroundColor: (theme) => (theme.palette.mode === 'dark' ? '#111325' : theme.palette.background.paper),
+        opacity: isDragging ? 0.6 : 1,
+        transform: CSS.Transform.toString(transform),
+        transition,
+      }}
+    >
+      <Stack direction="row" spacing={2} alignItems="center">
+        <Avatar sx={{ width: 56, height: 56, bgcolor: avatarColor, color: '#fff' }}>
+          <FolderIcon />
+        </Avatar>
+        <Box sx={{ flex: 1 }}>
+          <Typography variant="h6" fontWeight={700} gutterBottom>
+            {chapter.title}
+          </Typography>
+          {chapter.description ? (
+            <Typography
+              variant="body2"
+              color="text.secondary"
+              sx={{
+                wordBreak: 'break-word',
+                overflowWrap: 'anywhere',
+                display: '-webkit-box',
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: 'vertical',
+                overflow: 'hidden',
+              }}
+            >
+              {chapter.description}
+            </Typography>
+          ) : null}
+        </Box>
+        <Button
+          variant="outlined"
+          size="small"
+          onClick={(event) => onStatusMenuOpen(chapter.id, event.currentTarget)}
+          startIcon={<Box sx={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: statusConfig.dot }} />}
+          sx={{ textTransform: 'none', borderColor: 'rgba(255,255,255,0.08)' }}
+        >
+          {statusConfig.label}
+        </Button>
+        <IconButton size="small" {...attributes} {...listeners} sx={{ cursor: 'grab' }}>
+          <DragIndicatorIcon fontSize="small" />
+        </IconButton>
+        <IconButton onClick={() => onToggle(chapter.id)}>
+          {expanded ? <KeyboardArrowUpIcon /> : <KeyboardArrowDownIcon />}
+        </IconButton>
+        <IconButton onClick={(event) => onActionsMenuOpen(chapter.id, event.currentTarget)}>
+          <MoreVertIcon />
+        </IconButton>
+      </Stack>
+      {expanded ? (
+        <Box mt={3}>
+          <Divider sx={{ mb: 3 }} />
+          <Box mb={subchapters.length ? 3 : 2}>
+            <LessonContainer
+              containerId={getChapterRootContainerId(chapter.id)}
+              chapterId={chapter.id}
+              parentLessonId={null}
+              lessons={standaloneLessons}
+            >
+              {(items) =>
+                items.length ? (
+                  <Stack spacing={1.5}>
+                    {items.map((lesson) => (
+                      <SortableLessonCard
+                        key={lesson.id}
+                        lesson={lesson}
+                        chapterId={chapter.id}
+                        containerId={getChapterRootContainerId(chapter.id)}
+                        onLessonClick={onLessonClick}
+                      />
+                    ))}
+                  </Stack>
+                ) : (
+                  <LessonDropPlaceholder label="Ziehe Lektionen hierher oder lege neue an." />
+                )
+              }
+            </LessonContainer>
+          </Box>
+          {subchapters.map((subchapter) => {
+            const children = lessonsByParent[subchapter.id] ?? [];
+            const containerId = getSubchapterContainerId(chapter.id, subchapter.id);
+            return (
+              <Box key={subchapter.id} mb={2.5}>
+                <Paper
+                  variant="outlined"
+                  sx={{
+                    borderRadius: 3,
+                    p: 2,
+                    backgroundColor: (theme) => (theme.palette.mode === 'dark' ? '#0f172a' : '#f8fafc'),
+                  }}
+                >
+                  <Stack
+                    direction={{ xs: 'column', sm: 'row' }}
+                    spacing={1.5}
+                    alignItems={{ xs: 'flex-start', sm: 'center' }}
+                    justifyContent="space-between"
+                  >
+                    <Stack direction="row" spacing={1.5} alignItems="center">
+                      <Avatar sx={{ width: 44, height: 44, bgcolor: lessonTypeConfig.subchapter.color, color: '#fff' }}>
+                        {lessonTypeConfig.subchapter.icon}
+                      </Avatar>
+                      <Box>
+                        <Typography fontWeight={600}>{subchapter.title}</Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          Unterkapitel
+                        </Typography>
+                      </Box>
+                    </Stack>
+                    <Button
+                      startIcon={<AddIcon />}
+                      size="small"
+                      variant="outlined"
+                      sx={{ textTransform: 'none' }}
+                      onClick={() => onAddLesson(chapter.id, subchapter.id)}
+                    >
+                      Lektion hinzufügen
+                    </Button>
+                  </Stack>
+                  <Box mt={2}>
+                    <LessonContainer
+                      containerId={containerId}
+                      chapterId={chapter.id}
+                      parentLessonId={subchapter.id}
+                      lessons={children}
+                    >
+                      {(items) =>
+                        items.length ? (
+                          <Stack spacing={1.25}>
+                            {items.map((lesson) => (
+                              <SortableLessonCard
+                                key={lesson.id}
+                                lesson={lesson}
+                                chapterId={chapter.id}
+                                containerId={containerId}
+                                onLessonClick={onLessonClick}
+                              />
+                            ))}
+                          </Stack>
+                        ) : (
+                          <LessonDropPlaceholder label="Noch keine Lektionen in diesem Unterkapitel." />
+                        )
+                      }
+                    </LessonContainer>
+                  </Box>
+                </Paper>
+              </Box>
+            );
+          })}
+          {standaloneLessons.length === 0 && subchapters.length === 0 ? (
+            <Typography variant="body2" color="text.secondary" mb={2}>
+             
+            </Typography>
+          ) : null}
+          <Stack
+            direction={{ xs: 'column', sm: 'row' }}
+            spacing={2}
+            justifyContent="space-between"
+            alignItems="center"
+          >
+           
+            <Button
+              startIcon={<AddIcon />}
+              variant="outlined"
+              sx={{ textTransform: 'none' }}
+              onClick={() => onAddLesson(chapter.id)}
+            >
+              Lektion hinzufügen
+            </Button>
+          </Stack>
+        </Box>
+      ) : null}
+    </Paper>
   );
 };
 

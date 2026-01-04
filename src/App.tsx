@@ -7,6 +7,7 @@ import Header from './components/Header';
 import Dashboard from './pages/Dashboard';
 import Courses from './pages/Courses';
 import CourseEditor from './pages/CourseEditor';
+import LessonEditor from './pages/LessonEditor';
 import Profile from './pages/Profile';
 import Home from './pages/Home';
 import Members from './pages/Members';
@@ -41,6 +42,7 @@ function App() {
           <Route path="/home" element={<Home />} />
           <Route path="/courses" element={<Courses />} />
           <Route path="/courses/:courseId" element={<CourseEditor />} />
+          <Route path="/courses/:courseId/chapters/:chapterId/lessons/:lessonId" element={<LessonEditor />} />
           <Route path="/members" element={<Members />} />
           <Route path="/profile" element={<Profile />} />
         </Route>
