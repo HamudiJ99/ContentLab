@@ -34,6 +34,8 @@ import {
   ListItem,
   ListItemAvatar,
   ListItemText,
+  Menu,
+  MenuItem,
   OutlinedInput,
   Paper,
   Snackbar,
@@ -46,19 +48,18 @@ import {
   TableRow,
   Tabs,
   TextField,
-  MenuItem,
   Tooltip,
   Typography,
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import FilterListIcon from '@mui/icons-material/FilterList';
 import PersonAddAlt1Icon from '@mui/icons-material/PersonAddAlt1';
-import RefreshIcon from '@mui/icons-material/Refresh';
 import DownloadIcon from '@mui/icons-material/Download';
 import CloseIcon from '@mui/icons-material/Close';
 import GroupsIcon from '@mui/icons-material/Groups';
 import SchoolIcon from '@mui/icons-material/School';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
+import SaveIcon from '@mui/icons-material/Save';
 import { auth, db } from '../firebase/firebaseConfig';
 
 type MemberStatus = 'invited' | 'active' | 'inactive';
@@ -94,8 +95,10 @@ type Course = {
   chapters?: number;
 };
 
-const statusConfig: Record<MemberStatus, { label: string; color: 'default' | 'success' | 'warning' }> = {
-  invited: { label: 'Eingeladen', color: 'warning' },
+type MemberSortOption = 'date-desc' | 'name-asc';
+
+const statusConfig: Record<MemberStatus, { label: string; color: 'default' | 'success' | 'warning' | 'primary' }> = {
+  invited: { label: 'Eingeladen', color: 'primary' },
   active: { label: 'Aktiv', color: 'success' },
   inactive: { label: 'Inaktiv', color: 'default' },
 };
@@ -130,6 +133,8 @@ export default function Members() {
   const [loadingCourses, setLoadingCourses] = useState(true);
   const [activeTab, setActiveTab] = useState(0);
   const [search, setSearch] = useState('');
+  const [sortOption, setSortOption] = useState<MemberSortOption>('date-desc');
+  const [filterAnchorEl, setFilterAnchorEl] = useState<null | HTMLElement>(null);
   const [selectedMember, setSelectedMember] = useState<Member | null>(null);
   const [selectedCourseIds, setSelectedCourseIds] = useState<string[]>([]);
   const [initialCourseIds, setInitialCourseIds] = useState<string[]>([]);
@@ -145,6 +150,7 @@ export default function Members() {
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'info' as 'success' | 'error' | 'info' });
   const [memberToDelete, setMemberToDelete] = useState<Member | null>(null);
   const [deleteMemberLoading, setDeleteMemberLoading] = useState(false);
+  const [confirmExportOpen, setConfirmExportOpen] = useState(false);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => setCurrentUser(user));
@@ -279,12 +285,33 @@ export default function Members() {
   }, [groups]);
 
   const filteredMembers = useMemo(() => {
-    if (!search) return members;
-    const term = search.toLowerCase();
-    return members.filter((member) =>
-      member.name.toLowerCase().includes(term) || member.email.toLowerCase().includes(term)
-    );
-  }, [members, search]);
+    const term = search.trim().toLowerCase();
+    const baseList = term
+      ? members.filter((member) =>
+          member.name.toLowerCase().includes(term) || member.email.toLowerCase().includes(term)
+        )
+      : members;
+
+    const sortedList = [...baseList].sort((a, b) => {
+      if (sortOption === 'name-asc') {
+        return a.name.localeCompare(b.name, 'de', { sensitivity: 'base' });
+      }
+      const dateA = a.createdAt ? a.createdAt.getTime() : 0;
+      const dateB = b.createdAt ? b.createdAt.getTime() : 0;
+      return dateB - dateA;
+    });
+
+    return sortedList;
+  }, [members, search, sortOption]);
+
+  const handleFilterMenuClose = () => {
+    setFilterAnchorEl(null);
+  };
+
+  const handleSortChange = (option: MemberSortOption) => {
+    setSortOption(option);
+    handleFilterMenuClose();
+  };
 
   const handleSelectMember = (member: Member) => {
     setSelectedMember(member);
@@ -586,6 +613,11 @@ export default function Members() {
     URL.revokeObjectURL(url);
   };
 
+  const handleConfirmExport = () => {
+    handleExportCsv();
+    setConfirmExportOpen(false);
+  };
+
   if (!currentUser) {
     return (
       <Box sx={{ p: { xs: 2, md: 4 }, maxWidth: 1160, mx: 'auto' }}>
@@ -596,19 +628,14 @@ export default function Members() {
 
   return (
     <Box sx={{ p: { xs: 2, md: 4 }, maxWidth: 1160, mx: 'auto', width: '100%' }}>
-      <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" alignItems={{ xs: 'flex-start', md: 'center' }} spacing={2} mb={3}>
-        <Box>
-          <Typography variant="h4" fontWeight={700} gutterBottom>
-            Mitglieder
-          </Typography>
-          <Typography color="text.secondary">
-            Lade Personen ein, erstelle Gruppen und teile Kurse gezielt zu.
-          </Typography>
-        </Box>
-        <Button variant="contained" startIcon={<PersonAddAlt1Icon />} onClick={() => setAddMemberOpen(true)}>
-          Mitglied hinzufügen
-        </Button>
-      </Stack>
+      <Box mb={3}>
+        <Typography variant="h4" fontWeight={700} gutterBottom>
+          Mitglieder
+        </Typography>
+        <Typography color="text.secondary">
+          Lade Personen ein, erstelle Gruppen und teile Kurse gezielt zu.
+        </Typography>
+      </Box>
 
       <Tabs
         value={activeTab}
@@ -616,7 +643,7 @@ export default function Members() {
         sx={{ borderBottom: 1, borderColor: 'divider' }}
       >
         <Tab label={`Mitglieder (${members.length})`} />
-        <Tab label={`Eigenschaftsgruppen (${groups.length})`} />
+        <Tab label={`Gruppen (${groups.length})`} />
       </Tabs>
 
       {activeTab === 0 && (
@@ -634,24 +661,41 @@ export default function Members() {
               }
             />
             <Stack direction="row" spacing={1} justifyContent="flex-end">
-              <Tooltip title="Filter">
-                <IconButton color="inherit">
+              <Tooltip title="Sortieren">
+                <IconButton
+                  color={sortOption === 'date-desc' ? 'inherit' : 'primary'}
+                  onClick={(event) => setFilterAnchorEl(event.currentTarget)}
+                  aria-controls={filterAnchorEl ? 'member-filter-menu' : undefined}
+                  aria-haspopup="true"
+                >
                   <FilterListIcon />
                 </IconButton>
               </Tooltip>
-              <Tooltip title="Reload">
-                <IconButton color="inherit" onClick={() => currentUser && loadMembers(currentUser)}>
-                  <RefreshIcon />
+              <Tooltip title="Export CSV">
+                <IconButton color="inherit" onClick={() => setConfirmExportOpen(true)}>
+                  <DownloadIcon />
                 </IconButton>
               </Tooltip>
-              <Button variant="outlined" startIcon={<DownloadIcon />} onClick={handleExportCsv}>
-                Export CSV
-              </Button>
               <Button variant="contained" startIcon={<PersonAddAlt1Icon />} onClick={() => setAddMemberOpen(true)}>
                 Hinzufügen
               </Button>
             </Stack>
           </Stack>
+          <Menu
+            id="member-filter-menu"
+            anchorEl={filterAnchorEl}
+            open={Boolean(filterAnchorEl)}
+            onClose={handleFilterMenuClose}
+            anchorOrigin={{ horizontal: 'right', vertical: 'bottom' }}
+            transformOrigin={{ horizontal: 'right', vertical: 'top' }}
+          >
+            <MenuItem selected={sortOption === 'name-asc'} onClick={() => handleSortChange('name-asc')}>
+              Name (A–Z)
+            </MenuItem>
+            <MenuItem selected={sortOption === 'date-desc'} onClick={() => handleSortChange('date-desc')}>
+              Neueste zuerst
+            </MenuItem>
+          </Menu>
           <Divider sx={{ my: 3 }} />
           {loadingMembers ? (
             <Stack alignItems="center" justifyContent="center" sx={{ py: 6 }}>
@@ -663,23 +707,16 @@ export default function Members() {
             <Table size="small">
               <TableHead>
                 <TableRow>
-                  <TableCell padding="checkbox">
-                    <Checkbox color="primary" disabled />
-                  </TableCell>
                   <TableCell>Name</TableCell>
                   <TableCell>Status</TableCell>
                   <TableCell>Gruppen</TableCell>
                   <TableCell>Zugeteilte Kurse</TableCell>
                   <TableCell>Erstellt</TableCell>
-                  <TableCell align="right">Aktionen</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
                 {filteredMembers.map((member) => (
                   <TableRow key={member.id} hover sx={{ cursor: 'pointer' }} onClick={() => handleSelectMember(member)}>
-                    <TableCell padding="checkbox">
-                      <Checkbox color="primary" />
-                    </TableCell>
                     <TableCell>
                       <Stack direction="row" spacing={2} alignItems="center">
                         <Avatar>{initials(member.name)}</Avatar>
@@ -720,25 +757,6 @@ export default function Members() {
                     </TableCell>
                     <TableCell>
                       <Typography variant="body2">{formatDateTime(member.createdAt)}</Typography>
-                    </TableCell>
-                    <TableCell align="right">
-                      <Stack direction="row" spacing={1} justifyContent="flex-end" alignItems="center">
-                        <Typography variant="body2" color="text.secondary">
-                          Details
-                        </Typography>
-                        <Tooltip title="Mitglied löschen">
-                          <IconButton
-                            size="small"
-                            color="error"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              handleDeleteMemberRequest(member);
-                            }}
-                          >
-                            <DeleteOutlineIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
-                      </Stack>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -901,6 +919,22 @@ export default function Members() {
         </DialogActions>
       </Dialog>
 
+      <Dialog open={confirmExportOpen} onClose={() => setConfirmExportOpen(false)}>
+        <DialogTitle>Export bestätigen</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            Möchtest du die aktuelle Mitgliederliste als CSV exportieren? Eventuelle Filter oder Suchbegriffe werden
+            übernommen.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConfirmExportOpen(false)}>Abbrechen</Button>
+          <Button onClick={handleConfirmExport} variant="contained">
+            Export starten
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       <Drawer anchor="right" open={Boolean(selectedMember)} onClose={handleDrawerClose} sx={{ '& .MuiDrawer-paper': { width: { xs: 360, sm: 420 }, p: 3 } }}>
         {selectedMember && (
           <Stack spacing={3} height="100%">
@@ -977,11 +1011,25 @@ export default function Members() {
             </Box>
             <Box sx={{ mt: 'auto' }}>
               <Divider sx={{ mb: 2 }} />
-              <Stack direction="row" spacing={2} justifyContent="flex-end">
-                <Button onClick={handleDrawerClose}>Schließen</Button>
-                <Button variant="contained" onClick={handleSaveAssignments} disabled={drawerSaving}>
-                  {drawerSaving ? 'Speichert...' : 'Änderungen speichern'}
-                </Button>
+              <Stack direction="row" spacing={1.5} justifyContent="flex-end" alignItems="center">
+                <Tooltip title="Mitglied löschen">
+                  <span>
+                    <IconButton
+                      color="error"
+                      onClick={() => selectedMember && handleDeleteMemberRequest(selectedMember)}
+                      disabled={deleteMemberLoading}
+                    >
+                      <DeleteOutlineIcon />
+                    </IconButton>
+                  </span>
+                </Tooltip>
+                <Tooltip title={drawerSaving ? 'Speichert...' : 'Änderungen speichern'}>
+                  <span>
+                    <IconButton color="primary" onClick={handleSaveAssignments} disabled={drawerSaving}>
+                      {drawerSaving ? <CircularProgress size={20} color="inherit" /> : <SaveIcon />}
+                    </IconButton>
+                  </span>
+                </Tooltip>
               </Stack>
             </Box>
           </Stack>
