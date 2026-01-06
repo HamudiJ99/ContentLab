@@ -62,7 +62,9 @@ export default function Sidebar() {
         <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', py: 2 }}>
           <List sx={{ mt: 0 }}>
             {navigationItems.map((item) => {
-              const isActive = location.pathname === item.path;
+              const isActive = item.path === '/courses' 
+                ? location.pathname.startsWith('/courses')
+                : location.pathname === item.path;
               return (
                 <ListItemButton
                   key={item.path}

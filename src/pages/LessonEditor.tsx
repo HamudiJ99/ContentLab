@@ -8,13 +8,14 @@ import {
   CircularProgress,
   IconButton,
   Link,
+  Snackbar,
   Stack,
   TextField,
   Typography,
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
-import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import {
   collection,
@@ -23,7 +24,6 @@ import {
   increment,
   onSnapshot,
   serverTimestamp,
-  setDoc,
   updateDoc,
 } from 'firebase/firestore';
 import { auth, db } from '../firebase/firebaseConfig';
@@ -105,6 +105,7 @@ const LessonEditor = () => {
   const [pageError, setPageError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
+  const [saveSuccessOpen, setSaveSuccessOpen] = useState(false);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
@@ -266,6 +267,7 @@ const LessonEditor = () => {
         status: lessonForm.status,
         updatedAt: serverTimestamp(),
       });
+      setSaveSuccessOpen(true);
     } catch (error) {
       setPageError('Lektion konnte nicht gespeichert werden.');
     } finally {
@@ -290,36 +292,6 @@ const LessonEditor = () => {
       navigate(`/courses/${courseId}`);
     } catch (error) {
       setPageError('Lektion konnte nicht gelöscht werden.');
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
-  const handleDuplicateLesson = async () => {
-    if (!chapterRef || !courseRef || !lesson) {
-      return;
-    }
-    setPageError(null);
-    setActionLoading(true);
-    try {
-      const lessonsCollection = collection(chapterRef, 'lessons');
-      const duplicatedLessonRef = doc(lessonsCollection);
-      await setDoc(duplicatedLessonRef, {
-        title: `${lessonForm.title.trim() || lesson.title} Kopie`,
-        type: lesson.type,
-        parentLessonId: lesson.parentLessonId ?? null,
-        position: Date.now(),
-        status: lessonForm.status,
-        shortDescription: lessonForm.shortDescription.trim(),
-        content: lessonForm.content.trim(),
-        createdAt: serverTimestamp(),
-      });
-      if (lesson.type !== 'subchapter') {
-        await updateDoc(courseRef, { lessons: increment(1) });
-      }
-      navigate(`/courses/${courseId}/chapters/${chapterId}/lessons/${duplicatedLessonRef.id}`);
-    } catch (error) {
-      setPageError('Lektion konnte nicht dupliziert werden.');
     } finally {
       setActionLoading(false);
     }
@@ -484,33 +456,39 @@ const LessonEditor = () => {
             />
           </Box>
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} justifyContent="space-between" alignItems={{ xs: 'stretch', sm: 'center' }}>
-            <Stack direction="row" spacing={1} flexWrap="wrap">
-              <Button
-                variant="outlined"
-                startIcon={<ContentCopyIcon />}
-                onClick={handleDuplicateLesson}
-                disabled={actionLoading}
-                sx={{ textTransform: 'none' }}
-              >
-                Kopieren & öffnen
-              </Button>
-              <Button
-                variant="outlined"
-                color="error"
-                startIcon={<DeleteOutlineIcon />}
-                onClick={handleDeleteLesson}
-                disabled={actionLoading}
-                sx={{ textTransform: 'none' }}
-              >
-                Löschen
-              </Button>
-            </Stack>
+            <Button
+              variant="outlined"
+              color="error"
+              startIcon={<DeleteOutlineIcon />}
+              onClick={handleDeleteLesson}
+              disabled={actionLoading}
+              sx={{ textTransform: 'none' }}
+            >
+              Löschen
+            </Button>
             <IconButton onClick={handleBackToCourse} sx={{ display: { xs: 'none', sm: 'inline-flex' } }}>
               <ArrowBackIcon />
             </IconButton>
           </Stack>
         </Stack>
       )}
+      
+      <Snackbar
+        open={saveSuccessOpen}
+        autoHideDuration={3000}
+        onClose={() => setSaveSuccessOpen(false)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert
+          onClose={() => setSaveSuccessOpen(false)}
+          severity="success"
+          variant="filled"
+          icon={<CheckCircleIcon />}
+          sx={{ width: '100%' }}
+        >
+          Änderungen erfolgreich gespeichert
+        </Alert>
+      </Snackbar>
     </Box>
   );
 };

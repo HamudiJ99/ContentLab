@@ -286,7 +286,15 @@ const CourseEditor = () => {
 
   const [lessonForm, setLessonForm] = useState<LessonFormState>(emptyLessonForm);
   const [lessonSaving, setLessonSaving] = useState(false);
-  const [expandedChapters, setExpandedChapters] = useState<Set<string>>(new Set());
+  const [expandedChapters, setExpandedChapters] = useState<Set<string>>(() => {
+    if (!courseId) return new Set();
+    try {
+      const stored = localStorage.getItem(`expandedChapters_${courseId}`);
+      return stored ? new Set(JSON.parse(stored)) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
   const [statusMenu, setStatusMenu] = useState<{ anchorEl: HTMLElement | null; chapterId: string | null }>({
     anchorEl: null,
     chapterId: null,
@@ -294,6 +302,15 @@ const CourseEditor = () => {
   const [actionsMenu, setActionsMenu] = useState<{ anchorEl: HTMLElement | null; chapterId: string | null }>({
     anchorEl: null,
     chapterId: null,
+  });
+  const [lessonActionsMenu, setLessonActionsMenu] = useState<{ 
+    anchorEl: HTMLElement | null; 
+    chapterId: string | null; 
+    lessonId: string | null;
+  }>({
+    anchorEl: null,
+    chapterId: null,
+    lessonId: null,
   });
   const ownerId = currentUser?.uid ?? 'shared';
   const [coverToolsOpen, setCoverToolsOpen] = useState(false);
@@ -324,6 +341,15 @@ const CourseEditor = () => {
       lessonListeners.current = {};
     };
   }, []);
+
+  useEffect(() => {
+    if (!courseId) return;
+    try {
+      localStorage.setItem(`expandedChapters_${courseId}`, JSON.stringify([...expandedChapters]));
+    } catch (error) {
+      console.error('Failed to save expanded chapters', error);
+    }
+  }, [expandedChapters, courseId]);
 
   useEffect(() => {
     if (!currentUser) {
@@ -452,8 +478,19 @@ const CourseEditor = () => {
     Object.values(lessonListeners.current).forEach((unsubscribe) => unsubscribe());
     lessonListeners.current = {};
     setLessonsByChapter({});
-    setExpandedChapters(new Set());
     hasSyncedCountsRef.current = false;
+    
+    // Lade expandedChapters aus localStorage für den neuen courseId
+    if (courseId) {
+      try {
+        const stored = localStorage.getItem(`expandedChapters_${courseId}`);
+        setExpandedChapters(stored ? new Set(JSON.parse(stored)) : new Set());
+      } catch {
+        setExpandedChapters(new Set());
+      }
+    } else {
+      setExpandedChapters(new Set());
+    }
   }, [courseId]);
 
   const courseRef = useMemo(() => {
@@ -543,6 +580,16 @@ const CourseEditor = () => {
     },
     [chaptersCollection],
   );
+
+  // Initialisiere Lektionen-Listener für aufgeklappte Kapitel
+  useEffect(() => {
+    if (chapters.length === 0 || expandedChapters.size === 0) {
+      return;
+    }
+    expandedChapters.forEach((chapterId) => {
+      ensureLessonsListener(chapterId);
+    });
+  }, [chapters, expandedChapters, ensureLessonsListener]);
 
   const handleOpenPropertiesDialog = () => {
     if (!course) {
@@ -890,6 +937,72 @@ const CourseEditor = () => {
     }
   };
 
+  const handleDeleteLesson = async (chapterId: string, lessonId: string) => {
+    if (!courseRef || !window.confirm('Lektion wirklich löschen?')) {
+      return;
+    }
+    try {
+      const chapterRef = doc(courseRef, 'chapters', chapterId);
+      const lessonRef = doc(chapterRef, 'lessons', lessonId);
+      const lessonSnapshot = await getDoc(lessonRef);
+      
+      if (!lessonSnapshot.exists()) {
+        return;
+      }
+      
+      const lessonData = lessonSnapshot.data();
+      const lessonType = (lessonData.type as LessonType) ?? 'text';
+      
+      await deleteDoc(lessonRef);
+      
+      if (lessonType !== 'subchapter') {
+        await updateDoc(courseRef, { lessons: increment(-1) });
+      }
+      
+      void refreshCourseAggregates();
+    } catch (error) {
+      setPageError('Lektion konnte nicht gelöscht werden.');
+    }
+  };
+
+  const handleDuplicateLesson = async (chapterId: string, lessonId: string) => {
+    if (!courseRef) {
+      return;
+    }
+    try {
+      const chapterRef = doc(courseRef, 'chapters', chapterId);
+      const lessonRef = doc(chapterRef, 'lessons', lessonId);
+      const lessonSnapshot = await getDoc(lessonRef);
+      
+      if (!lessonSnapshot.exists()) {
+        return;
+      }
+      
+      const lessonData = lessonSnapshot.data();
+      const lessonType = (lessonData.type as LessonType) ?? 'text';
+      
+      const duplicatedLessonRef = doc(collection(chapterRef, 'lessons'));
+      await setDoc(duplicatedLessonRef, {
+        ...lessonData,
+        title: `${lessonData.title || 'Lektion'} Kopie`,
+        position: Date.now(),
+        createdAt: serverTimestamp(),
+      });
+      
+      if (lessonType !== 'subchapter') {
+        await updateDoc(courseRef, { lessons: increment(1) });
+      }
+      
+      void refreshCourseAggregates();
+    } catch (error) {
+      setPageError('Lektion konnte nicht dupliziert werden.');
+    }
+  };
+
+  const handleLessonActionsMenuOpen = (chapterId: string, lessonId: string, anchorEl: HTMLElement) => {
+    setLessonActionsMenu({ anchorEl, chapterId, lessonId });
+  };
+
   const handleStatusMenuOpen = (chapterId: string, anchorEl: HTMLElement) => {
     setStatusMenu({ anchorEl, chapterId });
   };
@@ -901,6 +1014,7 @@ const CourseEditor = () => {
   const handleCloseMenus = () => {
     setStatusMenu({ anchorEl: null, chapterId: null });
     setActionsMenu({ anchorEl: null, chapterId: null });
+    setLessonActionsMenu({ anchorEl: null, chapterId: null, lessonId: null });
   };
 
   const handleSelectStatus = async (nextStatus: ChapterStatus) => {
@@ -1319,6 +1433,7 @@ const CourseEditor = () => {
                       lessons={lessonsByChapter[chapter.id] ?? []}
                       onLessonClick={handleLessonCardClick}
                       onAddLesson={handleOpenLessonDialog}
+                      onLessonActionsMenuOpen={handleLessonActionsMenuOpen}
                     />
                   ))}
                 </Stack>
@@ -1883,6 +1998,34 @@ const CourseEditor = () => {
           Löschen
         </MenuItem>
       </Menu>
+
+      <Menu
+        anchorEl={lessonActionsMenu.anchorEl}
+        open={Boolean(lessonActionsMenu.anchorEl)}
+        onClose={handleCloseMenus}
+        anchorOrigin={{ horizontal: 'right', vertical: 'bottom' }}
+      >
+        <MenuItem
+          onClick={() => {
+            if (lessonActionsMenu.chapterId && lessonActionsMenu.lessonId) {
+              handleDuplicateLesson(lessonActionsMenu.chapterId, lessonActionsMenu.lessonId);
+            }
+            handleCloseMenus();
+          }}
+        >
+          Duplizieren
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            if (lessonActionsMenu.chapterId && lessonActionsMenu.lessonId) {
+              handleDeleteLesson(lessonActionsMenu.chapterId, lessonActionsMenu.lessonId);
+            }
+            handleCloseMenus();
+          }}
+        >
+          Löschen
+        </MenuItem>
+      </Menu>
     </Box>
   );
 };
@@ -1940,9 +2083,10 @@ type SortableLessonCardProps = {
   chapterId: string;
   containerId: string;
   onLessonClick: (chapterId: string, lesson: Lesson) => void;
+  onLessonActionsMenuOpen: (chapterId: string, lessonId: string, anchorEl: HTMLElement) => void;
 };
 
-const SortableLessonCard = ({ lesson, chapterId, containerId, onLessonClick }: SortableLessonCardProps) => {
+const SortableLessonCard = ({ lesson, chapterId, containerId, onLessonClick, onLessonActionsMenuOpen }: SortableLessonCardProps) => {
   const typeConfig = lessonTypeConfig[lesson.type] ?? lessonTypeConfig.text;
   const lessonStatus = (lesson.status as LessonStatus) ?? 'draft';
   const statusConfig = statusStyles[lessonStatus];
@@ -1970,13 +2114,19 @@ const SortableLessonCard = ({ lesson, chapterId, containerId, onLessonClick }: S
         transform: CSS.Transform.toString(transform),
         transition,
       }}
-      onClick={isTextLesson ? () => onLessonClick(chapterId, lesson) : undefined}
     >
       <Stack direction="row" spacing={2} alignItems="center">
-        <Avatar variant="rounded" sx={{ width: 48, height: 48, bgcolor: typeConfig.color, color: '#fff' }}>
+        <Avatar 
+          variant="rounded" 
+          sx={{ width: 48, height: 48, bgcolor: typeConfig.color, color: '#fff' }}
+          onClick={isTextLesson ? () => onLessonClick(chapterId, lesson) : undefined}
+        >
           {typeConfig.icon}
         </Avatar>
-        <Box sx={{ flex: 1 }}>
+        <Box 
+          sx={{ flex: 1, cursor: isTextLesson ? 'pointer' : 'default' }}
+          onClick={isTextLesson ? () => onLessonClick(chapterId, lesson) : undefined}
+        >
           <Typography fontWeight={600}>{lesson.title}</Typography>
           <Typography variant="caption" color="text.secondary">
             {typeConfig.label}
@@ -2000,6 +2150,15 @@ const SortableLessonCard = ({ lesson, chapterId, containerId, onLessonClick }: S
         />
         <IconButton size="small" {...attributes} {...listeners} sx={{ cursor: 'grab' }}>
           <DragIndicatorIcon fontSize="small" />
+        </IconButton>
+        <IconButton 
+          size="small" 
+          onClick={(event) => {
+            event.stopPropagation();
+            onLessonActionsMenuOpen(chapterId, lesson.id, event.currentTarget);
+          }}
+        >
+          <MoreVertIcon fontSize="small" />
         </IconButton>
       </Stack>
     </Paper>
@@ -2055,6 +2214,7 @@ type ChapterCardProps = {
   lessons: Lesson[];
   onLessonClick: (chapterId: string, lesson: Lesson) => void;
   onAddLesson: (chapterId: string, parentLessonId?: string | null) => void;
+  onLessonActionsMenuOpen: (chapterId: string, lessonId: string, anchorEl: HTMLElement) => void;
 };
 
 const ChapterCard = ({
@@ -2066,6 +2226,7 @@ const ChapterCard = ({
   lessons,
   onLessonClick,
   onAddLesson,
+  onLessonActionsMenuOpen,
 }: ChapterCardProps) => {
   const statusConfig = statusStyles[chapter.status];
   const avatarColor = chapter.coverColor || 'primary.main';
@@ -2161,6 +2322,7 @@ const ChapterCard = ({
                         chapterId={chapter.id}
                         containerId={getChapterRootContainerId(chapter.id)}
                         onLessonClick={onLessonClick}
+                        onLessonActionsMenuOpen={onLessonActionsMenuOpen}
                       />
                     ))}
                   </Stack>
@@ -2227,6 +2389,7 @@ const ChapterCard = ({
                                 chapterId={chapter.id}
                                 containerId={containerId}
                                 onLessonClick={onLessonClick}
+                                onLessonActionsMenuOpen={onLessonActionsMenuOpen}
                               />
                             ))}
                           </Stack>

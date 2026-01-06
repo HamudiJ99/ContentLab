@@ -1,0 +1,83 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return signedIn() && request.auth.uid == userId;
+    }
+
+    function authEmail() {
+      return signedIn() && 'email' in request.auth.token
+        ? request.auth.token.email.lower()
+        : null;
+    }
+
+    function inviteEmail(inviteData) {
+      return inviteData.inviteeEmail == null ? null : inviteData.inviteeEmail.lower();
+    }
+
+    function isInvitee(inviteData) {
+      return signedIn() && (
+        (inviteData.inviteeUid != null && inviteData.inviteeUid == request.auth.uid) ||
+        (inviteEmail(inviteData) != null && authEmail() != null && inviteEmail(inviteData) == authEmail())
+      );
+    }
+
+    function hasEnrollment(userId, courseId) {
+      let enrollmentDoc = /databases/$(database)/documents/users/$(request.auth.uid)/enrollments/$(courseId);
+      return signedIn() &&
+        exists(enrollmentDoc) &&
+        get(enrollmentDoc).data.ownerId == userId;
+    }
+
+    function canReadCourse(userId, courseId) {
+      return isOwner(userId) || hasEnrollment(userId, courseId);
+    }
+
+    match /users/{userId} {
+      allow read, write: if isOwner(userId);
+    }
+
+    match /users/{userId}/{document=**} {
+      allow read, write: if isOwner(userId);
+    }
+
+    match /users/{userId}/courses/{courseId} {
+      allow read: if canReadCourse(userId, courseId);
+      allow write, delete: if isOwner(userId);
+    }
+
+    match /users/{userId}/courses/{courseId}/chapters/{chapterId} {
+      allow read: if canReadCourse(userId, courseId);
+      allow write, delete: if isOwner(userId);
+
+      match /lessons/{lessonId} {
+        allow read: if canReadCourse(userId, courseId);
+        allow write, delete: if isOwner(userId);
+      }
+    }
+
+    match /courseInvitations/{inviteId} {
+      allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid;
+
+      allow read: if signedIn() && resource.data.ownerId == request.auth.uid;
+      allow read: if signedIn() && isInvitee(resource.data);
+
+      allow update: if signedIn() && resource.data.ownerId == request.auth.uid;
+      allow update: if signedIn() && (
+        isInvitee(resource.data) &&
+        request.resource.data.ownerId == resource.data.ownerId &&
+        request.resource.data.courseId == resource.data.courseId &&
+        request.resource.data.inviteeEmail == resource.data.inviteeEmail &&
+        request.resource.data.status == 'accepted' &&
+        (!('inviteeUid' in request.resource.data) || request.resource.data.inviteeUid == request.auth.uid)
+      );
+
+      allow delete: if signedIn() && resource.data.ownerId == request.auth.uid;
+    }
+  }
+}
