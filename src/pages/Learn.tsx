@@ -26,6 +26,7 @@ import {
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import PlayCircleOutlineIcon from '@mui/icons-material/PlayCircleOutline';
 import ArticleOutlinedIcon from '@mui/icons-material/ArticleOutlined';
+import PictureAsPdfOutlinedIcon from '@mui/icons-material/PictureAsPdfOutlined';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import RadioButtonUncheckedIcon from '@mui/icons-material/RadioButtonUnchecked';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
@@ -59,6 +60,7 @@ type Lesson = {
   position: number;
   shortDescription?: string;
   content?: string;
+  pdfUrl?: string;
 };
 
 type FlatLesson = Lesson & {
@@ -168,6 +170,7 @@ export default function Learn() {
               position: doc.data().position ?? index,
               shortDescription: doc.data().shortDescription,
               content: doc.data().content,
+              pdfUrl: doc.data().pdfUrl,
               status: doc.data().status,
             }))
             .filter((lesson) => lesson.type !== 'subchapter' && lesson.status === 'published')
@@ -323,6 +326,8 @@ export default function Learn() {
         return <PlayCircleOutlineIcon />;
       case 'text':
         return <ArticleOutlinedIcon />;
+      case 'pdf':
+        return <PictureAsPdfOutlinedIcon />;
       default:
         return <ArticleOutlinedIcon />;
     }
@@ -452,11 +457,52 @@ export default function Learn() {
                   >
                     {currentLesson.content}
                   </Typography>
+                ) : currentLesson.type === 'pdf' ? (
+                  <Box>
+                    {currentLesson.pdfUrl ? (
+                      <Stack spacing={2}>
+                        <Box
+                          sx={{
+                            width: '100%',
+                            height: 700,
+                            border: '1px solid',
+                            borderColor: 'divider',
+                            borderRadius: 1,
+                            overflow: 'hidden',
+                            bgcolor: 'background.default',
+                          }}
+                        >
+                          <iframe
+                            src={currentLesson.pdfUrl}
+                            style={{ width: '100%', height: '100%', border: 'none' }}
+                            title={currentLesson.title}
+                          />
+                        </Box>
+                        {currentLesson.content && (
+                          <Box sx={{ mt: 3 }}>
+                            <Typography variant="h6" gutterBottom fontWeight={600}>
+                              Zusätzliche Informationen
+                            </Typography>
+                            <Typography
+                              variant="body1"
+                              sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}
+                            >
+                              {currentLesson.content}
+                            </Typography>
+                          </Box>
+                        )}
+                      </Stack>
+                    ) : (
+                      <Alert severity="warning">
+                        PDF-Datei wurde noch nicht hochgeladen.
+                      </Alert>
+                    )}
+                  </Box>
                 ) : (
                   <Alert severity="info">
                     {currentLesson.type === 'video'
                       ? 'Video-Inhalte werden hier angezeigt.'
-                      : 'PDF-Inhalte werden hier angezeigt.'}
+                      : 'Dieser Lektionstyp wird noch nicht unterstützt.'}
                   </Alert>
                 )}
                 <Divider sx={{ my: 3 }} />

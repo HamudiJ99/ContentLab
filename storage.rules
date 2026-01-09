@@ -1,0 +1,26 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    
+    // Hilfsfunktionen
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+    
+    // Benutzer-spezifische Dateien
+    match /users/{userId}/{allPaths=**} {
+      // Lesen: Nur der Besitzer oder jemand mit Enrollment
+      allow read: if isSignedIn();
+      
+      // Schreiben: Nur der Besitzer und Datei maximal 50 MB
+      allow write: if isOwner(userId) && request.resource.size <= 50 * 1024 * 1024;
+      
+      // Löschen: Nur der Besitzer
+      allow delete: if isOwner(userId);
+    }
+  }
+}

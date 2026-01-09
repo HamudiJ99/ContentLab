@@ -16,6 +16,8 @@ import {
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import UploadFileIcon from '@mui/icons-material/UploadFile';
+import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import {
   collection,
@@ -26,7 +28,8 @@ import {
   serverTimestamp,
   updateDoc,
 } from 'firebase/firestore';
-import { auth, db } from '../firebase/firebaseConfig';
+import { auth, db, storage } from '../firebase/firebaseConfig';
+import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 
 const brandStatusColor = '#1a65ff';
 const statusButtonActiveColor = '#1d8bf2';
@@ -75,6 +78,7 @@ type LessonData = {
   content: string;
   status: LessonStatus;
   parentLessonId: string | null;
+  pdfUrl?: string;
 };
 
 type LessonFormState = {
@@ -88,7 +92,7 @@ const emptyLessonForm: LessonFormState = {
   title: '',
   shortDescription: '',
   content: '',
-  status: 'draft',
+  status: 'published',
 };
 
 const LessonEditor = () => {
@@ -106,6 +110,9 @@ const LessonEditor = () => {
   const [saving, setSaving] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [saveSuccessOpen, setSaveSuccessOpen] = useState(false);
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+  const [uploadingPdf, setUploadingPdf] = useState(false);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
@@ -220,8 +227,10 @@ const LessonEditor = () => {
             content: typeof data.content === 'string' ? data.content : '',
             status: (data.status as LessonStatus) ?? 'draft',
             parentLessonId: typeof data.parentLessonId === 'string' ? data.parentLessonId : null,
+            pdfUrl: typeof data.pdfUrl === 'string' ? data.pdfUrl : undefined,
           };
           setLesson(loadedLesson);
+          setPdfUrl(loadedLesson.pdfUrl ?? null);
           setLessonForm({
             title: loadedLesson.title,
             shortDescription: loadedLesson.shortDescription,
@@ -249,6 +258,71 @@ const LessonEditor = () => {
     setLessonForm((prev) => ({ ...prev, status }));
   };
 
+  const handlePdfFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    
+    const maxSizeInMB = 50;
+    const maxSizeInBytes = maxSizeInMB * 1024 * 1024;
+    
+    if (file.type !== 'application/pdf') {
+      setPageError('Bitte nur PDF-Dateien hochladen.');
+      return;
+    }
+    
+    if (file.size > maxSizeInBytes) {
+      setPageError(`Die PDF-Datei ist zu groß. Maximale Größe: ${maxSizeInMB} MB`);
+      return;
+    }
+    
+    setPageError(null);
+    setPdfFile(file);
+  };
+
+  const handleUploadPdf = async () => {
+    if (!pdfFile || !currentUser || !courseId || !chapterId || !lessonId) {
+      return;
+    }
+    setUploadingPdf(true);
+    setPageError(null);
+    try {
+      const storageRef = ref(storage, `users/${currentUser.uid}/courses/${courseId}/lessons/${lessonId}/lesson.pdf`);
+      await uploadBytes(storageRef, pdfFile);
+      const downloadUrl = await getDownloadURL(storageRef);
+      setPdfUrl(downloadUrl);
+      setPdfFile(null);
+      setPageError(null);
+    } catch (error) {
+      console.error('PDF upload failed:', error);
+      setPageError('PDF konnte nicht hochgeladen werden.');
+    } finally {
+      setUploadingPdf(false);
+    }
+  };
+
+  const handleRemovePdf = async () => {
+    if (!currentUser || !courseId || !chapterId || !lessonId || !pdfUrl) {
+      return;
+    }
+    if (!window.confirm('PDF wirklich entfernen?')) {
+      return;
+    }
+    setActionLoading(true);
+    try {
+      const storageRef = ref(storage, `users/${currentUser.uid}/courses/${courseId}/lessons/${lessonId}/lesson.pdf`);
+      await deleteObject(storageRef).catch(() => {});
+      setPdfUrl(null);
+      if (lessonRef) {
+        await updateDoc(lessonRef, { pdfUrl: null });
+      }
+    } catch (error) {
+      console.error('PDF removal failed:', error);
+      setPageError('PDF konnte nicht entfernt werden.');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   const handleSaveLesson = async () => {
     if (!lessonRef) {
       return;
@@ -260,13 +334,23 @@ const LessonEditor = () => {
     setPageError(null);
     setSaving(true);
     try {
-      await updateDoc(lessonRef, {
+      const updateData: Record<string, unknown> = {
         title: lessonForm.title.trim(),
         shortDescription: lessonForm.shortDescription.trim(),
-        content: lessonForm.content.trim(),
         status: lessonForm.status,
         updatedAt: serverTimestamp(),
-      });
+      };
+      
+      if (lesson?.type === 'text') {
+        updateData.content = lessonForm.content.trim();
+      } else if (lesson?.type === 'pdf') {
+        updateData.content = lessonForm.content.trim();
+        if (pdfUrl) {
+          updateData.pdfUrl = pdfUrl;
+        }
+      }
+      
+      await updateDoc(lessonRef, updateData);
       setSaveSuccessOpen(true);
     } catch (error) {
       setPageError('Lektion konnte nicht gespeichert werden.');
@@ -302,6 +386,8 @@ const LessonEditor = () => {
   };
 
   const isTextLesson = lesson?.type === 'text';
+  const isPdfLesson = lesson?.type === 'pdf';
+  const isEditableLesson = isTextLesson || isPdfLesson;
 
   const renderStatusButtons = () => (
     <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
@@ -394,7 +480,7 @@ const LessonEditor = () => {
           <Button
             variant="contained"
             onClick={handleSaveLesson}
-            disabled={saving || !lessonForm.title.trim() || !isTextLesson}
+            disabled={saving || !lessonForm.title.trim() || !isEditableLesson}
             sx={{ textTransform: 'none', minWidth: 160 }}
           >
             {saving ? 'Speichert...' : 'Änderungen speichern'}
@@ -416,9 +502,9 @@ const LessonEditor = () => {
         <Alert severity="warning">
           Diese Lektion wurde nicht gefunden oder wurde gelöscht.
         </Alert>
-      ) : !isTextLesson ? (
+      ) : !isEditableLesson ? (
         <Alert severity="info">
-          Dieser Lektionstyp wird aktuell nicht in der Textbearbeitung unterstützt.
+          Dieser Lektionstyp wird aktuell nicht unterstützt.
         </Alert>
       ) : (
         <Stack spacing={3}>
@@ -442,16 +528,140 @@ const LessonEditor = () => {
             minRows={2}
             fullWidth
           />
+          {isPdfLesson && (
+            <Box>
+              <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                PDF-Datei
+              </Typography>
+              {pdfUrl ? (
+                <Stack spacing={2}>
+                  <Box
+                    sx={{
+                      p: 2,
+                      border: '2px dashed',
+                      borderColor: 'primary.main',
+                      borderRadius: 2,
+                      bgcolor: 'rgba(26, 101, 255, 0.05)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 2,
+                    }}
+                  >
+                    <PictureAsPdfIcon sx={{ fontSize: 48, color: 'error.main' }} />
+                    <Box sx={{ flex: 1 }}>
+                      <Typography fontWeight={600}>PDF hochgeladen</Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        Die PDF-Datei wurde erfolgreich gespeichert.
+                      </Typography>
+                    </Box>
+                    <Button
+                      variant="outlined"
+                      color="error"
+                      size="small"
+                      onClick={handleRemovePdf}
+                      disabled={actionLoading}
+                    >
+                      Entfernen
+                    </Button>
+                  </Box>
+                  <Box
+                    sx={{
+                      width: '100%',
+                      height: 600,
+                      border: '1px solid',
+                      borderColor: 'divider',
+                      borderRadius: 1,
+                      overflow: 'hidden',
+                    }}
+                  >
+                    <iframe
+                      src={pdfUrl}
+                      style={{ width: '100%', height: '100%', border: 'none' }}
+                      title="PDF Vorschau"
+                    />
+                  </Box>
+                </Stack>
+              ) : (
+                <Stack spacing={2}>
+                  <Box
+                    sx={{
+                      p: 3,
+                      border: '2px dashed',
+                      borderColor: 'divider',
+                      borderRadius: 2,
+                      textAlign: 'center',
+                      bgcolor: 'background.default',
+                    }}
+                  >
+                    <PictureAsPdfIcon sx={{ fontSize: 64, color: 'text.secondary', mb: 2 }} />
+                    <Typography variant="h6" gutterBottom>
+                      Keine PDF hochgeladen
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                      Lade eine PDF-Datei hoch, die in dieser Lektion angezeigt werden soll.
+                    </Typography>
+                    <Button
+                      variant="outlined"
+                      component="label"
+                      startIcon={<UploadFileIcon />}
+                    >
+                      PDF auswählen
+                      <input
+                        type="file"
+                        hidden
+                        accept="application/pdf"
+                        onChange={handlePdfFileChange}
+                      />
+                    </Button>
+                  </Box>
+                  {pdfFile && (
+                    <Box
+                      sx={{
+                        p: 2,
+                        border: '1px solid',
+                        borderColor: 'divider',
+                        borderRadius: 1,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 2,
+                      }}
+                    >
+                      <PictureAsPdfIcon sx={{ color: 'error.main' }} />
+                      <Box sx={{ flex: 1 }}>
+                        <Typography variant="body2" fontWeight={600}>
+                          {pdfFile.name}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {(pdfFile.size / 1024 / 1024).toFixed(2)} MB
+                        </Typography>
+                      </Box>
+                      <Button
+                        variant="contained"
+                        size="small"
+                        onClick={handleUploadPdf}
+                        disabled={uploadingPdf}
+                      >
+                        {uploadingPdf ? 'Lädt hoch...' : 'Hochladen'}
+                      </Button>
+                      <IconButton size="small" onClick={() => setPdfFile(null)}>
+                        <DeleteOutlineIcon fontSize="small" />
+                      </IconButton>
+                    </Box>
+                  )}
+                </Stack>
+              )}
+            </Box>
+          )}
           <Box>
             <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-              Textinhalt
+              {isPdfLesson ? 'Zusätzlicher Text (optional)' : 'Textinhalt'}
             </Typography>
             <TextField
-              placeholder="Schreibe hier den ausführlichen Lektionstext ..."
+              placeholder={isPdfLesson ? 'Optionaler Text, der unter der PDF angezeigt wird ...' : 'Schreibe hier den ausführlichen Lektionstext ...'}
               value={lessonForm.content}
               onChange={handleLessonInputChange('content')}
               multiline
-              minRows={12}
+              minRows={isPdfLesson ? 6 : 12}
               fullWidth
             />
           </Box>

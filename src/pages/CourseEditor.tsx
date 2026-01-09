@@ -781,7 +781,7 @@ const CourseEditor = () => {
   };
 
   const handleLessonCardClick = (chapterId: string, lesson: Lesson) => {
-    if (lesson.type !== 'text' || !courseId) {
+    if ((lesson.type !== 'text' && lesson.type !== 'pdf') || !courseId) {
       return;
     }
     navigate(`/courses/${courseId}/chapters/${chapterId}/lessons/${lesson.id}`);
@@ -864,11 +864,15 @@ const CourseEditor = () => {
         parentLessonId: lessonForm.parentLessonId ?? null,
         position: Date.now(),
         createdAt: serverTimestamp(),
-        status: 'draft',
+        status: 'published',
         shortDescription: '',
       };
       if (lessonType === 'text') {
         newLessonData.content = '';
+      }
+      if (lessonType === 'pdf') {
+        newLessonData.content = '';
+        newLessonData.pdfUrl = null;
       }
       await setDoc(lessonRef, newLessonData);
       if (lessonType !== 'subchapter') {
@@ -2091,6 +2095,7 @@ const SortableLessonCard = ({ lesson, chapterId, containerId, onLessonClick, onL
   const lessonStatus = (lesson.status as LessonStatus) ?? 'draft';
   const statusConfig = statusStyles[lessonStatus];
   const isTextLesson = lesson.type === 'text';
+  const isClickableLesson = lesson.type === 'text' || lesson.type === 'pdf';
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: lesson.id,
     data: {
@@ -2109,7 +2114,7 @@ const SortableLessonCard = ({ lesson, chapterId, containerId, onLessonClick, onL
         borderRadius: 2,
         p: 1.5,
         backgroundColor: (theme) => (theme.palette.mode === 'dark' ? '#111325' : theme.palette.background.default),
-        cursor: isTextLesson ? 'pointer' : 'default',
+        cursor: isClickableLesson ? 'pointer' : 'default',
         opacity: isDragging ? 0.6 : 1,
         transform: CSS.Transform.toString(transform),
         transition,
@@ -2119,13 +2124,13 @@ const SortableLessonCard = ({ lesson, chapterId, containerId, onLessonClick, onL
         <Avatar 
           variant="rounded" 
           sx={{ width: 48, height: 48, bgcolor: typeConfig.color, color: '#fff' }}
-          onClick={isTextLesson ? () => onLessonClick(chapterId, lesson) : undefined}
+          onClick={isClickableLesson ? () => onLessonClick(chapterId, lesson) : undefined}
         >
           {typeConfig.icon}
         </Avatar>
         <Box 
-          sx={{ flex: 1, cursor: isTextLesson ? 'pointer' : 'default' }}
-          onClick={isTextLesson ? () => onLessonClick(chapterId, lesson) : undefined}
+          sx={{ flex: 1, cursor: isClickableLesson ? 'pointer' : 'default' }}
+          onClick={isClickableLesson ? () => onLessonClick(chapterId, lesson) : undefined}
         >
           <Typography fontWeight={600}>{lesson.title}</Typography>
           <Typography variant="caption" color="text.secondary">

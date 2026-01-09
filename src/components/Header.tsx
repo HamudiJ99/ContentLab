@@ -25,6 +25,7 @@ import DarkModeIcon from '@mui/icons-material/DarkMode';
 import LightModeIcon from '@mui/icons-material/LightMode';
 import LogoutIcon from '@mui/icons-material/Logout';
 import NotificationsNoneIcon from '@mui/icons-material/NotificationsNone';
+import CloseIcon from '@mui/icons-material/Close';
 import { signOut, onAuthStateChanged, type User } from 'firebase/auth';
 import {
   collection,
@@ -36,6 +37,7 @@ import {
   where,
   updateDoc,
   setDoc,
+  deleteDoc,
   serverTimestamp,
 } from 'firebase/firestore';
 import { auth, db } from '../firebase/firebaseConfig';
@@ -78,6 +80,7 @@ export default function Header() {
   const [courseInvitations, setCourseInvitations] = useState<CourseInvitation[]>([]);
   const [invitationsLoading, setInvitationsLoading] = useState(false);
   const [acceptingInvitationId, setAcceptingInvitationId] = useState<string | null>(null);
+  const [decliningInvitationId, setDecliningInvitationId] = useState<string | null>(null);
   const [notificationSnackbar, setNotificationSnackbar] = useState({
     open: false,
     message: '',
@@ -186,6 +189,31 @@ export default function Header() {
       console.error('Logout failed', error);
     } finally {
       handleMenuClose();
+    }
+  };
+
+  const handleDeclineInvitation = async (invitation: CourseInvitation) => {
+    if (!authUser) return;
+    setDecliningInvitationId(invitation.id);
+    try {
+      await deleteDoc(doc(db, 'courseInvitations', invitation.id));
+
+      setCourseInvitations((prev) => prev.filter((inv) => inv.id !== invitation.id));
+
+      setNotificationSnackbar({
+        open: true,
+        message: 'Einladung abgelehnt.',
+        severity: 'success',
+      });
+    } catch (error) {
+      console.error('Einladung konnte nicht abgelehnt werden', error);
+      setNotificationSnackbar({
+        open: true,
+        message: 'Einladung konnte nicht abgelehnt werden.',
+        severity: 'error',
+      });
+    } finally {
+      setDecliningInvitationId(null);
     }
   };
 
@@ -307,11 +335,16 @@ export default function Header() {
             disableAutoFocusItem
             PaperProps={{ sx: { width: 360, maxWidth: '90vw' } }}
           >
-            <Box sx={{ px: 2, py: 1.5 }}>
-              <Typography fontWeight={700}>Benachrichtigungen</Typography>
-              <Typography variant="body2" color="text.secondary">
-                {hasPendingInvites ? 'Du hast neue Kurseinladungen.' : 'Keine neuen Einladungen.'}
-              </Typography>
+            <Box sx={{ px: 2, py: 1.5, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Box>
+                <Typography fontWeight={700}>Benachrichtigungen</Typography>
+                <Typography variant="body2" color="text.secondary">
+                  {hasPendingInvites ? 'Du hast neue Kurseinladungen.' : 'Keine neuen Einladungen.'}
+                </Typography>
+              </Box>
+              <IconButton size="small" onClick={handleNotificationsClose}>
+                <CloseIcon fontSize="small" />
+              </IconButton>
             </Box>
             <Divider />
             <Box sx={{ maxHeight: 360, overflowY: 'auto', px: 2, py: 2 }}>
@@ -346,12 +379,20 @@ export default function Header() {
                       </Typography>
                       <Stack direction="row" spacing={1} justifyContent="flex-end" mt={1.5}>
                         <Button
+                          variant="outlined"
+                          size="small"
+                          onClick={() => handleDeclineInvitation(invitation)}
+                          disabled={decliningInvitationId === invitation.id}
+                        >
+                          {decliningInvitationId === invitation.id ? 'Wird abgelehnt…' : 'Ablehnen'}
+                        </Button>
+                        <Button
                           variant="contained"
                           size="small"
                           onClick={() => handleAcceptInvitation(invitation)}
                           disabled={acceptingInvitationId === invitation.id}
                         >
-                          {acceptingInvitationId === invitation.id ? 'Wird akzeptiert…' : 'Einladung annehmen'}
+                          {acceptingInvitationId === invitation.id ? 'Wird akzeptiert…' : 'Annehmen'}
                         </Button>
                       </Stack>
                     </Box>

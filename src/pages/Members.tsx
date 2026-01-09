@@ -83,6 +83,7 @@ type MemberGroup = {
   name: string;
   description?: string;
   createdAt?: Date | null;
+  assignedCourseIds: string[];
 };
 
 type Course = {
@@ -136,6 +137,10 @@ export default function Members() {
   const [sortOption, setSortOption] = useState<MemberSortOption>('date-desc');
   const [filterAnchorEl, setFilterAnchorEl] = useState<null | HTMLElement>(null);
   const [selectedMember, setSelectedMember] = useState<Member | null>(null);
+  const [selectedGroup, setSelectedGroup] = useState<MemberGroup | null>(null);
+  const [selectedGroupCourseIds, setSelectedGroupCourseIds] = useState<string[]>([]);
+  const [initialGroupCourseIds, setInitialGroupCourseIds] = useState<string[]>([]);
+  const [groupDrawerSaving, setGroupDrawerSaving] = useState(false);
   const [selectedCourseIds, setSelectedCourseIds] = useState<string[]>([]);
   const [initialCourseIds, setInitialCourseIds] = useState<string[]>([]);
   const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>([]);
@@ -213,6 +218,7 @@ export default function Members() {
           name: data.name ?? 'Neue Gruppe',
           description: data.description ?? '',
           createdAt: data.createdAt?.toDate?.() ?? null,
+          assignedCourseIds: Array.isArray(data.assignedCourseIds) ? data.assignedCourseIds : [],
         };
       });
       setGroups(loadedGroups);
@@ -329,10 +335,96 @@ export default function Members() {
     setSelectedRole('member');
   };
 
+  const handleSelectGroup = (group: MemberGroup) => {
+    setSelectedGroup(group);
+    setSelectedGroupCourseIds(group.assignedCourseIds);
+    setInitialGroupCourseIds(group.assignedCourseIds);
+  };
+
+  const handleGroupDrawerClose = () => {
+    setSelectedGroup(null);
+    setSelectedGroupCourseIds([]);
+    setInitialGroupCourseIds([]);
+  };
+
   const toggleCourseSelection = (courseId: string) => {
     setSelectedCourseIds((prev) =>
       prev.includes(courseId) ? prev.filter((id) => id !== courseId) : [...prev, courseId]
     );
+  };
+
+  const toggleGroupCourseSelection = (courseId: string) => {
+    setSelectedGroupCourseIds((prev) =>
+      prev.includes(courseId) ? prev.filter((id) => id !== courseId) : [...prev, courseId]
+    );
+  };
+
+  const handleSaveGroupCourses = async () => {
+    if (!currentUser || !selectedGroup) return;
+    const addedCourseIds = selectedGroupCourseIds.filter((id) => !initialGroupCourseIds.includes(id));
+    const removedCourseIds = initialGroupCourseIds.filter((id) => !selectedGroupCourseIds.includes(id));
+
+    setGroupDrawerSaving(true);
+    try {
+      const groupRef = doc(db, 'users', currentUser.uid, 'memberGroups', selectedGroup.id);
+      await updateDoc(groupRef, {
+        assignedCourseIds: selectedGroupCourseIds,
+        updatedAt: serverTimestamp(),
+      });
+
+      setGroups((prev) =>
+        prev.map((group) =>
+          group.id === selectedGroup.id
+            ? { ...group, assignedCourseIds: selectedGroupCourseIds }
+            : group
+        )
+      );
+
+      setSelectedGroup((prev) =>
+        prev ? { ...prev, assignedCourseIds: selectedGroupCourseIds } : prev
+      );
+
+      // Automatically assign courses to all members in this group
+      const groupMembers = members.filter((member) => member.groupIds.includes(selectedGroup.id));
+      
+      for (const member of groupMembers) {
+        if (!member.email) continue;
+
+        // Merge member's existing courses with new group courses
+        const mergedCourseIds = Array.from(new Set([...member.assignedCourseIds, ...addedCourseIds]));
+        const finalCourseIds = mergedCourseIds.filter((id) => !removedCourseIds.includes(id));
+
+        const memberRef = doc(db, 'users', currentUser.uid, 'members', member.id);
+        await updateDoc(memberRef, {
+          assignedCourseIds: finalCourseIds,
+          updatedAt: serverTimestamp(),
+        });
+
+        // Update local state
+        setMembers((prev) =>
+          prev.map((m) =>
+            m.id === member.id ? { ...m, assignedCourseIds: finalCourseIds } : m
+          )
+        );
+
+        // Send invitations for added courses
+        if (addedCourseIds.length > 0) {
+          await syncCourseInvitationsForMember(member, addedCourseIds, []);
+        }
+        // Revoke invitations for removed courses
+        if (removedCourseIds.length > 0) {
+          await syncCourseInvitationsForMember(member, [], removedCourseIds);
+        }
+      }
+
+      setInitialGroupCourseIds(selectedGroupCourseIds);
+      setSnackbar({ open: true, message: `Kurse aktualisiert. ${groupMembers.length} Mitglied(er) wurden benachrichtigt.`, severity: 'success' });
+    } catch (error) {
+      console.error('Gruppenkurse konnten nicht gespeichert werden', error);
+      setSnackbar({ open: true, message: 'Gruppenkurse konnten nicht gespeichert werden.', severity: 'error' });
+    } finally {
+      setGroupDrawerSaving(false);
+    }
   };
 
   const handleSaveAssignments = async () => {
@@ -458,11 +550,12 @@ export default function Members() {
       const payload = {
         name: newGroup.name,
         description: newGroup.description,
+        assignedCourseIds: [],
         createdAt: serverTimestamp(),
       };
       const docRef = await addDoc(collection(db, 'users', currentUser.uid, 'memberGroups'), payload);
       setGroups((prev) => [
-        { id: docRef.id, name: payload.name, description: payload.description, createdAt: new Date() },
+        { id: docRef.id, name: payload.name, description: payload.description, assignedCourseIds: [], createdAt: new Date() },
         ...prev,
       ]);
       setNewGroup({ name: '', description: '' });
@@ -793,30 +886,34 @@ export default function Members() {
               {groups.map((group) => {
                 const membersInGroup = members.filter((member) => member.groupIds.includes(group.id));
                 return (
-                  <Paper key={group.id} variant="outlined" sx={{ p: 2 }}>
+                  <Paper 
+                    key={group.id} 
+                    variant="outlined" 
+                    sx={{ p: 2, cursor: 'pointer', '&:hover': { bgcolor: 'action.hover' } }}
+                    onClick={() => handleSelectGroup(group)}
+                  >
                     <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} justifyContent="space-between" alignItems={{ xs: 'flex-start', md: 'center' }}>
                       <Box>
                         <Typography fontWeight={600}>{group.name}</Typography>
                         {group.description && (
                           <Typography variant="body2" color="text.secondary">{group.description}</Typography>
                         )}
-                        <Stack direction="row" spacing={1} mt={1} flexWrap="wrap">
-                          {membersInGroup.slice(0, 6).map((member) => (
-                            <Chip key={member.id} label={member.name} size="small" />
-                          ))}
-                          {membersInGroup.length === 0 && (
-                            <Typography variant="body2" color="text.secondary">
-                              Noch keine Mitglieder
-                            </Typography>
-                          )}
+                        <Stack direction="row" spacing={2} mt={1}>
+                          <Chip 
+                            icon={<GroupsIcon fontSize="small" />}
+                            label={`${membersInGroup.length} Mitglied${membersInGroup.length !== 1 ? 'er' : ''}`} 
+                            size="small" 
+                            variant="outlined"
+                          />
+                          <Chip 
+                            icon={<SchoolIcon fontSize="small" />}
+                            label={`${group.assignedCourseIds.length} Kurs${group.assignedCourseIds.length !== 1 ? 'e' : ''}`} 
+                            size="small" 
+                            color="primary"
+                            variant="outlined"
+                          />
                         </Stack>
                       </Box>
-                      <Button variant="outlined" onClick={() => {
-                        const firstMember = members.find((member) => member.groupIds.includes(group.id));
-                        if (firstMember) handleSelectMember(firstMember);
-                      }}>
-                        Mitglieder verwalten
-                      </Button>
                     </Stack>
                   </Paper>
                 );
@@ -1027,6 +1124,108 @@ export default function Members() {
                   <span>
                     <IconButton color="primary" onClick={handleSaveAssignments} disabled={drawerSaving}>
                       {drawerSaving ? <CircularProgress size={20} color="inherit" /> : <SaveIcon />}
+                    </IconButton>
+                  </span>
+                </Tooltip>
+              </Stack>
+            </Box>
+          </Stack>
+        )}
+      </Drawer>
+
+      <Drawer anchor="right" open={Boolean(selectedGroup)} onClose={handleGroupDrawerClose} sx={{ '& .MuiDrawer-paper': { width: { xs: 360, sm: 420 }, p: 3 } }}>
+        {selectedGroup && (
+          <Stack spacing={3} height="100%">
+            <Stack direction="row" justifyContent="space-between" alignItems="center">
+              <Typography variant="h6" fontWeight={700}>
+                {selectedGroup.name}
+              </Typography>
+              <IconButton onClick={handleGroupDrawerClose}>
+                <CloseIcon />
+              </IconButton>
+            </Stack>
+            <Box>
+              {selectedGroup.description && (
+                <Typography variant="body2" color="text.secondary">
+                  {selectedGroup.description}
+                </Typography>
+              )}
+              <Stack direction="row" spacing={1} mt={1.5}>
+                <Chip 
+                  icon={<GroupsIcon fontSize="small" />}
+                  label={`${members.filter((m) => m.groupIds.includes(selectedGroup.id)).length} Mitglied(er)`} 
+                  size="small" 
+                  color="primary"
+                />
+              </Stack>
+            </Box>
+            <Box>
+              <Typography variant="subtitle1" fontWeight={600} gutterBottom>
+                Mitglieder in dieser Gruppe
+              </Typography>
+              {members.filter((m) => m.groupIds.includes(selectedGroup.id)).length === 0 ? (
+                <Alert severity="info" sx={{ mt: 1 }}>Noch keine Mitglieder zugeordnet.</Alert>
+              ) : (
+                <List sx={{ maxHeight: 200, overflow: 'auto', border: 1, borderColor: 'divider', borderRadius: 1 }}>
+                  {members.filter((m) => m.groupIds.includes(selectedGroup.id)).map((member) => (
+                    <ListItem key={member.id} disableGutters sx={{ px: 2 }}>
+                      <ListItemAvatar>
+                        <Avatar>{initials(member.name)}</Avatar>
+                      </ListItemAvatar>
+                      <ListItemText
+                        primary={member.name}
+                        secondary={member.email || 'Keine E-Mail'}
+                      />
+                    </ListItem>
+                  ))}
+                </List>
+              )}
+            </Box>
+            <Divider />
+            <Box>
+              <Typography variant="subtitle1" fontWeight={600} gutterBottom>
+                Kurse für diese Gruppe
+              </Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                Alle Mitglieder der Gruppe erhalten automatisch Einladungen zu den zugeordneten Kursen.
+              </Typography>
+              {loadingCourses ? (
+                <Stack alignItems="center" justifyContent="center" sx={{ py: 3 }}>
+                  <CircularProgress size={24} />
+                </Stack>
+              ) : courses.length === 0 ? (
+                <Alert severity="info">Noch keine veröffentlichten Kurse.</Alert>
+              ) : (
+                <List sx={{ maxHeight: 280, overflow: 'auto' }}>
+                  {courses.map((course) => (
+                    <ListItem key={course.id} disableGutters>
+                      <ListItemAvatar>
+                        <Avatar>
+                          <SchoolIcon />
+                        </Avatar>
+                      </ListItemAvatar>
+                      <ListItemText
+                        primary={course.title}
+                        secondary={`${course.lessons ?? 0} Lektionen`}
+                      />
+                      <Chip
+                        label={selectedGroupCourseIds.includes(course.id) ? 'Zugeordnet' : 'Verfügbar'}
+                        color={selectedGroupCourseIds.includes(course.id) ? 'primary' : 'default'}
+                        size="small"
+                        onClick={() => toggleGroupCourseSelection(course.id)}
+                      />
+                    </ListItem>
+                  ))}
+                </List>
+              )}
+            </Box>
+            <Box sx={{ mt: 'auto' }}>
+              <Divider sx={{ mb: 2 }} />
+              <Stack direction="row" spacing={1.5} justifyContent="flex-end" alignItems="center">
+                <Tooltip title={groupDrawerSaving ? 'Speichert...' : 'Kurse speichern & Mitglieder einladen'}>
+                  <span>
+                    <IconButton color="primary" onClick={handleSaveGroupCourses} disabled={groupDrawerSaving}>
+                      {groupDrawerSaving ? <CircularProgress size={20} color="inherit" /> : <SaveIcon />}
                     </IconButton>
                   </span>
                 </Tooltip>
