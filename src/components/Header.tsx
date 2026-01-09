@@ -26,6 +26,7 @@ import LightModeIcon from '@mui/icons-material/LightMode';
 import LogoutIcon from '@mui/icons-material/Logout';
 import NotificationsNoneIcon from '@mui/icons-material/NotificationsNone';
 import CloseIcon from '@mui/icons-material/Close';
+import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined';
 import { signOut, onAuthStateChanged, type User } from 'firebase/auth';
 import {
   collection,
@@ -173,6 +174,11 @@ export default function Header() {
 
   const handleProfileClick = () => {
     navigate('/profile');
+    handleMenuClose();
+  };
+
+  const handleSettingsClick = () => {
+    navigate('/settings');
     handleMenuClose();
   };
 
@@ -421,6 +427,12 @@ export default function Header() {
                 <PersonOutlineIcon fontSize="small" />
               </ListItemIcon>
               <ListItemText primary="Profil" />
+            </MenuItem>
+            <MenuItem onClick={handleSettingsClick}>
+              <ListItemIcon>
+                <SettingsOutlinedIcon fontSize="small" />
+              </ListItemIcon>
+              <ListItemText primary="Einstellungen" />
             </MenuItem>
             <MenuItem onClick={handleThemeToggle}>
               <ListItemIcon>

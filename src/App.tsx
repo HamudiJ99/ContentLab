@@ -13,6 +13,8 @@ import Profile from './pages/Profile';
 import Home from './pages/Home';
 import Members from './pages/Members';
 import SignIn from './pages/SignIn';
+import Settings from './pages/Settings';
+import { NavigationProvider } from './context/NavigationContext';
 
 const AppLayout = () => (
   <Box sx={{ display: 'flex', minHeight: '100vh', backgroundColor: (theme) => theme.palette.background.default }}>
@@ -36,19 +38,22 @@ const AppLayout = () => (
 function App() {
   return (
     <BrowserRouter>
-      <Routes>
-        <Route path="/auth" element={<SignIn />} />
-        <Route element={<AppLayout />}>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/home" element={<Home />} />
-          <Route path="/courses" element={<Courses />} />
-          <Route path="/courses/:courseId" element={<CourseEditor />} />
-          <Route path="/courses/:courseId/chapters/:chapterId/lessons/:lessonId" element={<LessonEditor />} />
-          <Route path="/learn/:courseId" element={<Learn />} />
-          <Route path="/members" element={<Members />} />
-          <Route path="/profile" element={<Profile />} />
-        </Route>
-      </Routes>
+      <NavigationProvider>
+        <Routes>
+          <Route path="/auth" element={<SignIn />} />
+          <Route element={<AppLayout />}>
+            <Route path="/" element={<Dashboard />} />
+            <Route path="/home" element={<Home />} />
+            <Route path="/courses" element={<Courses />} />
+            <Route path="/courses/:courseId" element={<CourseEditor />} />
+            <Route path="/courses/:courseId/chapters/:chapterId/lessons/:lessonId" element={<LessonEditor />} />
+            <Route path="/learn/:courseId" element={<Learn />} />
+            <Route path="/members" element={<Members />} />
+            <Route path="/profile" element={<Profile />} />
+            <Route path="/settings" element={<Settings />} />
+          </Route>
+        </Routes>
+      </NavigationProvider>
     </BrowserRouter>
   );
 }

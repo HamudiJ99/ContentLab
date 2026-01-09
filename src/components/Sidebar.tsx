@@ -4,6 +4,7 @@ import HomeOutlinedIcon from '@mui/icons-material/HomeOutlined';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import SchoolIcon from '@mui/icons-material/School';
 import GroupOutlinedIcon from '@mui/icons-material/GroupOutlined';
+import { useNavigation } from '../context/NavigationContext';
 
 const navigationItems = [
   { label: 'Home', icon: <HomeOutlinedIcon />, path: '/home' },
@@ -17,6 +18,15 @@ const drawerWidth = 330;
 export default function Sidebar() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { confirmNavigation } = useNavigation();
+
+  const handleNavigate = async (path: string) => {
+    const canNavigate = await confirmNavigation(path);
+    if (canNavigate) {
+      navigate(path);
+    }
+  };
+
   return (
     <Drawer
       variant="permanent"
@@ -39,7 +49,7 @@ export default function Sidebar() {
       <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
         <Box sx={{ px: 3, py: 2 }}>
           <ButtonBase
-            onClick={() => navigate('/home')}
+            onClick={() => handleNavigate('/home')}
             sx={{
               display: 'inline-flex',
               alignItems: 'baseline',
@@ -68,7 +78,7 @@ export default function Sidebar() {
               return (
                 <ListItemButton
                   key={item.path}
-                  onClick={() => navigate(item.path)}
+                  onClick={() => handleNavigate(item.path)}
                   sx={(theme) => ({
                     mx: 2,
                     mb: 0.75,

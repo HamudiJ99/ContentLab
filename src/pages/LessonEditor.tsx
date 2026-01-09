@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ChangeEvent } from 'react';
+import { useEffect, useMemo, useState, useCallback, useRef, type ChangeEvent } from 'react';
 import { Link as RouterLink, useNavigate, useParams } from 'react-router-dom';
 import {
   Alert,
@@ -6,6 +6,11 @@ import {
   Breadcrumbs,
   Button,
   CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
   IconButton,
   Link,
   Snackbar,
@@ -30,6 +35,8 @@ import {
 } from 'firebase/firestore';
 import { auth, db, storage } from '../firebase/firebaseConfig';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
+import RichTextEditor from '../components/RichTextEditor';
+import { useNavigation } from '../context/NavigationContext';
 
 const brandStatusColor = '#1a65ff';
 const statusButtonActiveColor = '#1d8bf2';
@@ -98,6 +105,7 @@ const emptyLessonForm: LessonFormState = {
 const LessonEditor = () => {
   const navigate = useNavigate();
   const { courseId, chapterId, lessonId } = useParams<{ courseId: string; chapterId: string; lessonId: string }>();
+  const { registerNavigationGuard, unregisterNavigationGuard } = useNavigation();
   const [currentUser, setCurrentUser] = useState<User | null>(auth.currentUser);
   const [course, setCourse] = useState<CourseMeta | null>(null);
   const [chapter, setChapter] = useState<ChapterMeta | null>(null);
@@ -113,6 +121,24 @@ const LessonEditor = () => {
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [uploadingPdf, setUploadingPdf] = useState(false);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
+  const [blockedNavigation, setBlockedNavigation] = useState<(() => void) | null>(null);
+  const hasUnsavedChangesRef = useRef(false);
+  const [warningEnabled, setWarningEnabled] = useState(true);
+
+  // Sync ref with state
+  useEffect(() => {
+    hasUnsavedChangesRef.current = hasUnsavedChanges;
+  }, [hasUnsavedChanges]);
+
+  // Lade Einstellungen
+  useEffect(() => {
+    const saved = localStorage.getItem('showUnsavedWarning');
+    if (saved !== null) {
+      setWarningEnabled(saved === 'true');
+    }
+  }, []);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
@@ -120,6 +146,33 @@ const LessonEditor = () => {
     });
     return unsubscribe;
   }, []);
+
+  // Warnung beim Verlassen der Seite
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (hasUnsavedChanges && warningEnabled) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [hasUnsavedChanges, warningEnabled]);
+
+  // Registriere Navigation Guard (nur einmal)
+  const navigationGuard = useCallback(() => {
+    if (hasUnsavedChangesRef.current && warningEnabled) {
+      setShowUnsavedDialog(true);
+      return false;
+    }
+    return true;
+  }, [warningEnabled]);
+
+  useEffect(() => {
+    registerNavigationGuard(navigationGuard);
+    return () => unregisterNavigationGuard();
+  }, [navigationGuard, registerNavigationGuard, unregisterNavigationGuard]);
 
   const courseRef = useMemo(() => {
     if (!currentUser || !courseId) {
@@ -252,10 +305,12 @@ const LessonEditor = () => {
     (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
       const value = event.target.value;
       setLessonForm((prev) => ({ ...prev, [field]: value }));
+      setHasUnsavedChanges(true);
     };
 
   const handleLessonStatusSelect = (status: LessonStatus) => {
     setLessonForm((prev) => ({ ...prev, status }));
+    setHasUnsavedChanges(true);
   };
 
   const handlePdfFileChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -351,6 +406,7 @@ const LessonEditor = () => {
       }
       
       await updateDoc(lessonRef, updateData);
+      setHasUnsavedChanges(false);
       setSaveSuccessOpen(true);
     } catch (error) {
       setPageError('Lektion konnte nicht gespeichert werden.');
@@ -382,7 +438,35 @@ const LessonEditor = () => {
   };
 
   const handleBackToCourse = () => {
-    navigate(courseId ? `/courses/${courseId}` : '/courses');
+    if (hasUnsavedChanges && warningEnabled) {
+      setBlockedNavigation(() => () => navigate(courseId ? `/courses/${courseId}` : '/courses'));
+      setShowUnsavedDialog(true);
+    } else {
+      navigate(courseId ? `/courses/${courseId}` : '/courses');
+    }
+  };
+
+  const handleNavigateTo = (path: string) => {
+    if (hasUnsavedChanges && warningEnabled) {
+      setBlockedNavigation(() => () => navigate(path));
+      setShowUnsavedDialog(true);
+    } else {
+      navigate(path);
+    }
+  };
+
+  const handleConfirmNavigation = () => {
+    setShowUnsavedDialog(false);
+    setHasUnsavedChanges(false);
+    if (blockedNavigation) {
+      blockedNavigation();
+      setBlockedNavigation(null);
+    }
+  };
+
+  const handleCancelNavigation = () => {
+    setShowUnsavedDialog(false);
+    setBlockedNavigation(null);
   };
 
   const isTextLesson = lesson?.type === 'text';
@@ -448,11 +532,29 @@ const LessonEditor = () => {
       }}
     >
       <Breadcrumbs sx={{ mb: 2 }}>
-        <Link component={RouterLink} to="/courses" underline="hover" color="inherit">
+        <Link 
+          component="button"
+          onClick={(e) => {
+            e.preventDefault();
+            handleNavigateTo('/courses');
+          }}
+          underline="hover" 
+          color="inherit"
+          sx={{ cursor: 'pointer' }}
+        >
           Kurse
         </Link>
         {courseId ? (
-          <Link component={RouterLink} to={`/courses/${courseId}`} underline="hover" color="inherit">
+          <Link 
+            component="button"
+            onClick={(e) => {
+              e.preventDefault();
+              handleNavigateTo(`/courses/${courseId}`);
+            }}
+            underline="hover" 
+            color="inherit"
+            sx={{ cursor: 'pointer' }}
+          >
             {course?.title ?? 'Kurs'}
           </Link>
         ) : null}
@@ -656,14 +758,26 @@ const LessonEditor = () => {
             <Typography variant="subtitle2" color="text.secondary" gutterBottom>
               {isPdfLesson ? 'Zusätzlicher Text (optional)' : 'Textinhalt'}
             </Typography>
-            <TextField
-              placeholder={isPdfLesson ? 'Optionaler Text, der unter der PDF angezeigt wird ...' : 'Schreibe hier den ausführlichen Lektionstext ...'}
-              value={lessonForm.content}
-              onChange={handleLessonInputChange('content')}
-              multiline
-              minRows={isPdfLesson ? 6 : 12}
-              fullWidth
-            />
+            {isTextLesson || isPdfLesson ? (
+              <RichTextEditor
+                content={lessonForm.content}
+                onChange={(newContent) => {
+                  setLessonForm((prev) => ({ ...prev, content: newContent }));
+                  setHasUnsavedChanges(true);
+                }}
+                placeholder={isPdfLesson ? 'Optionaler Text, der unter der PDF angezeigt wird ...' : 'Schreibe hier den ausführlichen Lektionstext ...'}
+                minHeight={isPdfLesson ? 200 : 400}
+              />
+            ) : (
+              <TextField
+                placeholder="Schreibe hier den ausführlichen Lektionstext ..."
+                value={lessonForm.content}
+                onChange={handleLessonInputChange('content')}
+                multiline
+                minRows={12}
+                fullWidth
+              />
+            )}
           </Box>
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} justifyContent="space-between" alignItems={{ xs: 'stretch', sm: 'center' }}>
             <Button
@@ -682,6 +796,30 @@ const LessonEditor = () => {
           </Stack>
         </Stack>
       )}
+
+      <Dialog
+        open={showUnsavedDialog}
+        onClose={handleCancelNavigation}
+        aria-labelledby="unsaved-dialog-title"
+        aria-describedby="unsaved-dialog-description"
+      >
+        <DialogTitle id="unsaved-dialog-title">
+          Nicht gespeicherte Änderungen
+        </DialogTitle>
+        <DialogContent>
+          <DialogContentText id="unsaved-dialog-description">
+            Du hast nicht gespeicherte Änderungen. Möchtest du diese Seite wirklich verlassen? Alle nicht gespeicherten Änderungen gehen verloren.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCancelNavigation} color="primary">
+            Abbrechen
+          </Button>
+          <Button onClick={handleConfirmNavigation} color="error" variant="contained" autoFocus>
+            Trotzdem verlassen
+          </Button>
+        </DialogActions>
+      </Dialog>
       
       <Snackbar
         open={saveSuccessOpen}

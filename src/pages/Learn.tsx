@@ -22,6 +22,8 @@ import {
   Link,
   Paper,
   Divider,
+  IconButton,
+  Tooltip,
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import PlayCircleOutlineIcon from '@mui/icons-material/PlayCircleOutline';
@@ -31,6 +33,8 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import RadioButtonUncheckedIcon from '@mui/icons-material/RadioButtonUnchecked';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
+import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
+import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import { collection, getDocs, doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../firebase/firebaseConfig';
@@ -79,6 +83,7 @@ export default function Learn() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedChapters, setExpandedChapters] = useState<Set<string>>(new Set());
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
@@ -432,9 +437,9 @@ export default function Learn() {
         </CardContent>
       </Card>
 
-      <Stack direction={{ xs: 'column', lg: 'row' }} spacing={3}>
+      <Stack direction={{ xs: 'column', lg: 'row' }} spacing={3} sx={{ position: 'relative' }}>
         {/* Lektionsinhalt */}
-        <Box sx={{ flex: 1 }}>
+        <Box sx={{ flex: 1, transition: 'all 0.3s ease' }}>
           {currentLesson ? (
             <Card>
               <CardContent>
@@ -451,12 +456,40 @@ export default function Learn() {
                 )}
                 <Divider sx={{ my: 3 }} />
                 {currentLesson.type === 'text' && currentLesson.content ? (
-                  <Typography
-                    variant="body1"
-                    sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}
-                  >
-                    {currentLesson.content}
-                  </Typography>
+                  <Box
+                    sx={{
+                      '& p': { margin: '0.5em 0' },
+                      '& h1': { fontSize: '2em', fontWeight: 700, margin: '0.67em 0' },
+                      '& h2': { fontSize: '1.5em', fontWeight: 700, margin: '0.75em 0' },
+                      '& h3': { fontSize: '1.17em', fontWeight: 700, margin: '0.83em 0' },
+                      '& ul, & ol': { paddingLeft: '1.5em', margin: '0.5em 0' },
+                      '& blockquote': {
+                        borderLeft: '3px solid',
+                        borderColor: 'divider',
+                        paddingLeft: '1em',
+                        marginLeft: 0,
+                        fontStyle: 'italic',
+                        color: 'text.secondary',
+                      },
+                      '& code': {
+                        bgcolor: 'action.hover',
+                        padding: '0.2em 0.4em',
+                        borderRadius: '3px',
+                        fontFamily: 'monospace',
+                      },
+                      '& pre': {
+                        bgcolor: 'action.hover',
+                        padding: '1em',
+                        borderRadius: '4px',
+                        overflow: 'auto',
+                        '& code': {
+                          bgcolor: 'transparent',
+                          padding: 0,
+                        },
+                      },
+                    }}
+                    dangerouslySetInnerHTML={{ __html: currentLesson.content }}
+                  />
                 ) : currentLesson.type === 'pdf' ? (
                   <Box>
                     {currentLesson.pdfUrl ? (
@@ -483,12 +516,41 @@ export default function Learn() {
                             <Typography variant="h6" gutterBottom fontWeight={600}>
                               Zusätzliche Informationen
                             </Typography>
-                            <Typography
-                              variant="body1"
-                              sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}
-                            >
-                              {currentLesson.content}
-                            </Typography>
+                            <Box
+                              sx={{
+                                '& p': { margin: '0.5em 0' },
+                                '& h1': { fontSize: '2em', fontWeight: 700, margin: '0.67em 0' },
+                                '& h2': { fontSize: '1.5em', fontWeight: 700, margin: '0.75em 0' },
+                                '& h3': { fontSize: '1.17em', fontWeight: 700, margin: '0.83em 0' },
+                                '& ul, & ol': { paddingLeft: '1.5em', margin: '0.5em 0' },
+                                '& blockquote': {
+                                  borderLeft: '3px solid',
+                                  borderColor: 'divider',
+                                  paddingLeft: '1em',
+                                  marginLeft: 0,
+                                  fontStyle: 'italic',
+                                  color: 'text.secondary',
+                                },
+                                '& code': {
+                                  bgcolor: 'action.hover',
+                                  padding: '0.2em 0.4em',
+                                  borderRadius: '3px',
+                                  fontFamily: 'monospace',
+                                },
+                                '& pre': {
+                                  bgcolor: 'action.hover',
+                                  padding: '1em',
+                                  borderRadius: '4px',
+                                  overflow: 'auto',
+                                  '& code': {
+                                    bgcolor: 'transparent',
+                                    padding: 0,
+                                  },
+                                },
+                                whiteSpace: 'pre-wrap',
+                              }}
+                              dangerouslySetInnerHTML={{ __html: currentLesson.content }}
+                            />
                           </Box>
                         )}
                       </Stack>
@@ -551,18 +613,58 @@ export default function Learn() {
         </Box>
 
         {/* Kapitel & Lektionen Liste */}
-        <Paper
+        <Box
           sx={{
-            width: { xs: '100%', lg: 380 },
+            width: sidebarOpen ? { xs: '100%', lg: 380 } : 0,
             maxHeight: { xs: 'auto', lg: '80vh' },
-            overflow: 'auto',
-            p: 2,
+            overflow: 'visible',
+            transition: 'all 0.3s ease',
+            position: 'relative',
           }}
         >
-          <Typography variant="h6" fontWeight={600} mb={2}>
-            Kursinhalt
-          </Typography>
-          {chapters.map((chapter) => {
+          {/* Toggle Button */}
+          <Tooltip title={sidebarOpen ? 'Kursinhalt ausblenden' : 'Kursinhalt anzeigen'} placement="left">
+            <IconButton
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              size="small"
+              sx={{
+                position: 'absolute',
+                top: 8,
+                right: 8,
+                bgcolor: 'background.paper',
+                border: 1,
+                borderColor: 'divider',
+                zIndex: 10,
+                boxShadow: 2,
+                display: { xs: 'none', lg: 'flex' },
+                '&:hover': {
+                  bgcolor: 'action.hover',
+                  boxShadow: 3,
+                },
+              }}
+            >
+              {sidebarOpen ? <ChevronRightIcon /> : <ChevronLeftIcon />}
+            </IconButton>
+          </Tooltip>
+
+          <Paper
+            sx={{
+              width: '100%',
+              maxHeight: { xs: 'auto', lg: '80vh' },
+              overflow: 'auto',
+              p: 2,
+              pt: 6,
+              opacity: sidebarOpen ? 1 : 0,
+              transition: 'opacity 0.3s ease',
+              visibility: sidebarOpen ? 'visible' : 'hidden',
+            }}
+          >
+            {sidebarOpen && (
+              <>
+                <Typography variant="h6" fontWeight={600} mb={2}>
+                  Kursinhalt
+                </Typography>
+                {chapters.map((chapter) => {
             const chapterLessons = lessonsByChapter[chapter.id] || [];
             const chapterCompleted = chapterLessons.every((lesson) =>
               completedLessons.has(lesson.id)
@@ -624,7 +726,10 @@ export default function Learn() {
               </Accordion>
             );
           })}
-        </Paper>
+              </>
+            )}
+          </Paper>
+        </Box>
       </Stack>
     </Box>
   );
