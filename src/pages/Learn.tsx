@@ -65,6 +65,7 @@ type Lesson = {
   shortDescription?: string;
   content?: string;
   pdfUrl?: string;
+  videoUrl?: string;
 };
 
 type FlatLesson = Lesson & {
@@ -176,6 +177,7 @@ export default function Learn() {
               shortDescription: doc.data().shortDescription,
               content: doc.data().content,
               pdfUrl: doc.data().pdfUrl,
+              videoUrl: doc.data().videoUrl,
               status: doc.data().status,
             }))
             .filter((lesson) => lesson.type !== 'subchapter' && lesson.status === 'published')
@@ -560,11 +562,79 @@ export default function Learn() {
                       </Alert>
                     )}
                   </Box>
+                ) : currentLesson.type === 'video' ? (
+                  <Box>
+                    {currentLesson.videoUrl ? (
+                      <Stack spacing={2}>
+                        <Box
+                          sx={{
+                            width: '100%',
+                            height: 500,
+                            border: '1px solid',
+                            borderColor: 'divider',
+                            borderRadius: 1,
+                            overflow: 'hidden',
+                            bgcolor: 'background.default',
+                          }}
+                        >
+                          <video
+                            src={currentLesson.videoUrl}
+                            controls
+                            style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                          />
+                        </Box>
+                        {currentLesson.content && (
+                          <Box sx={{ mt: 3 }}>
+                            <Typography variant="h6" gutterBottom fontWeight={600}>
+                              Zusätzliche Informationen
+                            </Typography>
+                            <Box
+                              sx={{
+                                '& p': { margin: '0.5em 0' },
+                                '& h1': { fontSize: '2em', fontWeight: 700, margin: '0.67em 0' },
+                                '& h2': { fontSize: '1.5em', fontWeight: 700, margin: '0.75em 0' },
+                                '& h3': { fontSize: '1.17em', fontWeight: 700, margin: '0.83em 0' },
+                                '& ul, & ol': { paddingLeft: '1.5em', margin: '0.5em 0' },
+                                '& blockquote': {
+                                  borderLeft: '3px solid',
+                                  borderColor: 'divider',
+                                  paddingLeft: '1em',
+                                  marginLeft: 0,
+                                  fontStyle: 'italic',
+                                  color: 'text.secondary',
+                                },
+                                '& code': {
+                                  bgcolor: 'action.hover',
+                                  padding: '0.2em 0.4em',
+                                  borderRadius: '3px',
+                                  fontFamily: 'monospace',
+                                },
+                                '& pre': {
+                                  bgcolor: 'action.hover',
+                                  padding: '1em',
+                                  borderRadius: '4px',
+                                  overflow: 'auto',
+                                  '& code': {
+                                    bgcolor: 'transparent',
+                                    padding: 0,
+                                  },
+                                },
+                                whiteSpace: 'pre-wrap',
+                              }}
+                              dangerouslySetInnerHTML={{ __html: currentLesson.content }}
+                            />
+                          </Box>
+                        )}
+                      </Stack>
+                    ) : (
+                      <Alert severity="warning">
+                        Video-Datei wurde noch nicht hochgeladen.
+                      </Alert>
+                    )}
+                  </Box>
                 ) : (
                   <Alert severity="info">
-                    {currentLesson.type === 'video'
-                      ? 'Video-Inhalte werden hier angezeigt.'
-                      : 'Dieser Lektionstyp wird noch nicht unterstützt.'}
+                    Dieser Lektionstyp wird noch nicht unterstützt.
                   </Alert>
                 )}
                 <Divider sx={{ my: 3 }} />

@@ -23,6 +23,7 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
+import PlayCircleOutlineIcon from '@mui/icons-material/PlayCircleOutline';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import {
   collection,
@@ -86,6 +87,7 @@ type LessonData = {
   status: LessonStatus;
   parentLessonId: string | null;
   pdfUrl?: string;
+  videoUrl?: string;
 };
 
 type LessonFormState = {
@@ -121,6 +123,9 @@ const LessonEditor = () => {
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [uploadingPdf, setUploadingPdf] = useState(false);
+  const [videoFile, setVideoFile] = useState<File | null>(null);
+  const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [uploadingVideo, setUploadingVideo] = useState(false);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
   const [blockedNavigation, setBlockedNavigation] = useState<(() => void) | null>(null);
@@ -281,9 +286,11 @@ const LessonEditor = () => {
             status: (data.status as LessonStatus) ?? 'draft',
             parentLessonId: typeof data.parentLessonId === 'string' ? data.parentLessonId : null,
             pdfUrl: typeof data.pdfUrl === 'string' ? data.pdfUrl : undefined,
+            videoUrl: typeof data.videoUrl === 'string' ? data.videoUrl : undefined,
           };
           setLesson(loadedLesson);
           setPdfUrl(loadedLesson.pdfUrl ?? null);
+          setVideoUrl(loadedLesson.videoUrl ?? null);
           setLessonForm({
             title: loadedLesson.title,
             shortDescription: loadedLesson.shortDescription,
@@ -378,6 +385,75 @@ const LessonEditor = () => {
     }
   };
 
+  const handleVideoFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    
+    const maxSizeInMB = 100;
+    const maxSizeInBytes = maxSizeInMB * 1024 * 1024;
+    
+    if (!file.type.startsWith('video/')) {
+      setPageError('Bitte nur Video-Dateien hochladen.');
+      return;
+    }
+    
+    if (file.size > maxSizeInBytes) {
+      setPageError(`Die Video-Datei ist zu groß. Maximale Größe: ${maxSizeInMB} MB`);
+      return;
+    }
+    
+    setPageError(null);
+    setVideoFile(file);
+  };
+
+  const handleUploadVideo = async () => {
+    if (!videoFile || !currentUser || !courseId || !chapterId || !lessonId) {
+      return;
+    }
+    setUploadingVideo(true);
+    setPageError(null);
+    try {
+      const fileExtension = videoFile.name.split('.').pop();
+      const storageRef = ref(storage, `users/${currentUser.uid}/courses/${courseId}/lessons/${lessonId}/lesson.${fileExtension}`);
+      await uploadBytes(storageRef, videoFile);
+      const downloadUrl = await getDownloadURL(storageRef);
+      setVideoUrl(downloadUrl);
+      setVideoFile(null);
+      setPageError(null);
+    } catch (error) {
+      console.error('Video upload failed:', error);
+      setPageError('Video konnte nicht hochgeladen werden.');
+    } finally {
+      setUploadingVideo(false);
+    }
+  };
+
+  const handleRemoveVideo = async () => {
+    if (!currentUser || !courseId || !chapterId || !lessonId || !videoUrl) {
+      return;
+    }
+    if (!window.confirm('Video wirklich entfernen?')) {
+      return;
+    }
+    setActionLoading(true);
+    try {
+      // Extract file extension from URL
+      const urlParts = videoUrl.split('/');
+      const fileName = urlParts[urlParts.length - 1].split('?')[0];
+      const storageRef = ref(storage, `users/${currentUser.uid}/courses/${courseId}/lessons/${lessonId}/${fileName}`);
+      await deleteObject(storageRef).catch(() => {});
+      setVideoUrl(null);
+      if (lessonRef) {
+        await updateDoc(lessonRef, { videoUrl: null });
+      }
+    } catch (error) {
+      console.error('Video removal failed:', error);
+      setPageError('Video konnte nicht entfernt werden.');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   const handleSaveLesson = async () => {
     if (!lessonRef) {
       return;
@@ -402,6 +478,11 @@ const LessonEditor = () => {
         updateData.content = lessonForm.content.trim();
         if (pdfUrl) {
           updateData.pdfUrl = pdfUrl;
+        }
+      } else if (lesson?.type === 'video') {
+        updateData.content = lessonForm.content.trim();
+        if (videoUrl) {
+          updateData.videoUrl = videoUrl;
         }
       }
       
@@ -471,7 +552,8 @@ const LessonEditor = () => {
 
   const isTextLesson = lesson?.type === 'text';
   const isPdfLesson = lesson?.type === 'pdf';
-  const isEditableLesson = isTextLesson || isPdfLesson;
+  const isVideoLesson = lesson?.type === 'video';
+  const isEditableLesson = isTextLesson || isPdfLesson || isVideoLesson;
 
   const renderStatusButtons = () => (
     <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
@@ -754,19 +836,129 @@ const LessonEditor = () => {
               )}
             </Box>
           )}
+          {isVideoLesson && (
+            <Box>
+              <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                Video-Datei
+              </Typography>
+              {videoUrl ? (
+                <Stack spacing={2}>
+                  <Stack direction="row" spacing={2} alignItems="center">
+                    <Typography variant="body2" color="text.secondary">
+                      Video hochgeladen
+                    </Typography>
+                    <Button
+                      variant="outlined"
+                      color="error"
+                      size="small"
+                      onClick={handleRemoveVideo}
+                      disabled={actionLoading}
+                    >
+                      Entfernen
+                    </Button>
+                  </Stack>
+                  <Box
+                    sx={{
+                      width: '100%',
+                      height: 450,
+                      border: '1px solid',
+                      borderColor: 'divider',
+                      borderRadius: 1,
+                      overflow: 'hidden',
+                      bgcolor: 'background.default',
+                    }}
+                  >
+                    <video
+                      src={videoUrl}
+                      controls
+                      style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                    />
+                  </Box>
+                </Stack>
+              ) : (
+                <Stack spacing={2}>
+                  <Box
+                    sx={{
+                      p: 3,
+                      border: '2px dashed',
+                      borderColor: 'divider',
+                      borderRadius: 2,
+                      textAlign: 'center',
+                      bgcolor: 'background.default',
+                    }}
+                  >
+                    <PlayCircleOutlineIcon sx={{ fontSize: 64, color: 'text.secondary', mb: 2 }} />
+                    <Typography variant="h6" gutterBottom>
+                      Kein Video hochgeladen
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                      Lade eine Video-Datei hoch, die in dieser Lektion angezeigt werden soll.
+                    </Typography>
+                    <Button
+                      variant="outlined"
+                      component="label"
+                      startIcon={<UploadFileIcon />}
+                    >
+                      Video auswählen
+                      <input
+                        type="file"
+                        hidden
+                        accept="video/*"
+                        onChange={handleVideoFileChange}
+                      />
+                    </Button>
+                  </Box>
+                  {videoFile && (
+                    <Box
+                      sx={{
+                        p: 2,
+                        border: '1px solid',
+                        borderColor: 'divider',
+                        borderRadius: 1,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 2,
+                      }}
+                    >
+                      <PlayCircleOutlineIcon sx={{ color: 'primary.main' }} />
+                      <Box sx={{ flex: 1 }}>
+                        <Typography variant="body2" fontWeight={600}>
+                          {videoFile.name}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {(videoFile.size / 1024 / 1024).toFixed(2)} MB
+                        </Typography>
+                      </Box>
+                      <Button
+                        variant="contained"
+                        size="small"
+                        onClick={handleUploadVideo}
+                        disabled={uploadingVideo}
+                      >
+                        {uploadingVideo ? 'Lädt hoch...' : 'Hochladen'}
+                      </Button>
+                      <IconButton size="small" onClick={() => setVideoFile(null)}>
+                        <DeleteOutlineIcon fontSize="small" />
+                      </IconButton>
+                    </Box>
+                  )}
+                </Stack>
+              )}
+            </Box>
+          )}
           <Box>
             <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-              {isPdfLesson ? 'Zusätzlicher Text (optional)' : 'Textinhalt'}
+              {isPdfLesson ? 'Zusätzlicher Text (optional)' : isVideoLesson ? 'Zusätzlicher Text (optional)' : 'Textinhalt'}
             </Typography>
-            {isTextLesson || isPdfLesson ? (
+            {isTextLesson || isPdfLesson || isVideoLesson ? (
               <RichTextEditor
                 content={lessonForm.content}
                 onChange={(newContent) => {
                   setLessonForm((prev) => ({ ...prev, content: newContent }));
                   setHasUnsavedChanges(true);
                 }}
-                placeholder={isPdfLesson ? 'Optionaler Text, der unter der PDF angezeigt wird ...' : 'Schreibe hier den ausführlichen Lektionstext ...'}
-                minHeight={isPdfLesson ? 200 : 400}
+                placeholder={isPdfLesson || isVideoLesson ? 'Optionaler Text, der unter dem Inhalt angezeigt wird ...' : 'Schreibe hier den ausführlichen Lektionstext ...'}
+                minHeight={isPdfLesson || isVideoLesson ? 200 : 400}
               />
             ) : (
               <TextField

@@ -216,14 +216,14 @@ const coverColorOptions: Array<{ label: string; value: string; swatch?: string }
 
 const lessonTypeOptions: Array<{ value: LessonType; label: string; icon: ReactNode }> = [
   { value: 'subchapter', label: 'Unterkapitel', icon: <FolderOpenOutlinedIcon /> },
-  { value: 'video', label: 'Video/Audio', icon: <PlayCircleOutlineIcon /> },
+  { value: 'video', label: 'Video', icon: <PlayCircleOutlineIcon /> },
   { value: 'pdf', label: 'PDF', icon: <PictureAsPdfOutlinedIcon /> },
   { value: 'text', label: 'Text', icon: <ArticleOutlinedIcon /> },
 ];
 
 const lessonTypeConfig: Record<LessonType, { label: string; icon: ReactNode; color: string }> = {
   subchapter: { label: 'Unterkapitel', icon: <FolderOpenOutlinedIcon fontSize="small" />, color: '#2563eb' },
-  video: { label: 'Video/Audio', icon: <PlayCircleOutlineIcon fontSize="small" />, color: '#0ea5e9' },
+  video: { label: 'Video', icon: <PlayCircleOutlineIcon fontSize="small" />, color: '#0ea5e9' },
   pdf: { label: 'PDF', icon: <PictureAsPdfOutlinedIcon fontSize="small" />, color: '#ef4444' },
   text: { label: 'Text', icon: <ArticleOutlinedIcon fontSize="small" />, color: '#a855f7' },
 };
@@ -781,7 +781,7 @@ const CourseEditor = () => {
   };
 
   const handleLessonCardClick = (chapterId: string, lesson: Lesson) => {
-    if ((lesson.type !== 'text' && lesson.type !== 'pdf') || !courseId) {
+    if ((lesson.type !== 'text' && lesson.type !== 'pdf' && lesson.type !== 'video') || !courseId) {
       return;
     }
     navigate(`/courses/${courseId}/chapters/${chapterId}/lessons/${lesson.id}`);
@@ -2095,7 +2095,7 @@ const SortableLessonCard = ({ lesson, chapterId, containerId, onLessonClick, onL
   const lessonStatus = (lesson.status as LessonStatus) ?? 'draft';
   const statusConfig = statusStyles[lessonStatus];
   const isTextLesson = lesson.type === 'text';
-  const isClickableLesson = lesson.type === 'text' || lesson.type === 'pdf';
+  const isClickableLesson = lesson.type === 'text' || lesson.type === 'pdf' || lesson.type === 'video';
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: lesson.id,
     data: {
