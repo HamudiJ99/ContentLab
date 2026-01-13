@@ -834,11 +834,11 @@ const Courses = () => {
             minHeight: 44,
             textTransform: 'none',
             fontWeight: 600,
-            borderColor: (theme) => theme.palette.mode === 'dark' ? '#1a65ff' : undefined,
-            color: (theme) => theme.palette.mode === 'dark' ? '#1a65ff' : undefined,
+            borderColor: (theme) => theme.palette.primary.main,
+            color: (theme) => theme.palette.primary.main,
             '&:hover': {
-              borderColor: (theme) => (theme.palette.mode === 'dark' ? '#1a65ff' : undefined),
-              bgcolor: (theme) => (theme.palette.mode === 'dark' ? 'rgba(26,101,255,0.12)' : undefined),
+              borderColor: (theme) => theme.palette.primary.main,
+              bgcolor: (theme) => (theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.08)' : undefined),
             },
           }}
           onClick={() => setCategoryDrawerOpen(true)}
@@ -858,11 +858,6 @@ const Courses = () => {
             alignSelf: { xs: 'stretch', md: 'center' },
             flexShrink: 0,
             fontWeight: 700,
-            bgcolor: (theme) => (theme.palette.mode === 'dark' ? '#1a65ff' : undefined),
-            '&:hover': {
-              bgcolor: (theme) => (theme.palette.mode === 'dark' ? '#1a65ff' : undefined),
-              filter: (theme) => (theme.palette.mode === 'dark' ? 'brightness(1.05)' : undefined),
-            },
           }}
         >
           Kurs erstellen

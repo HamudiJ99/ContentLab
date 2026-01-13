@@ -27,6 +27,15 @@ export default function AppThemeProvider({ children }: Props) {
   const [mode, setMode] = useState<'light' | 'dark'>(getInitialMode);
   const [user, setUser] = useState<User | null>(null);
   const [hasLoadedRemoteMode, setHasLoadedRemoteMode] = useState(false);
+  const [brandColor, setBrandColor] = useState('#1D8BF1');
+
+  // Lade Brand Color aus localStorage
+  useEffect(() => {
+    const savedColor = localStorage.getItem('brandColor');
+    if (savedColor) {
+      setBrandColor(savedColor);
+    }
+  }, []);
 
   useEffect(() => {
     window.localStorage.setItem(STORAGE_KEY, mode);
@@ -91,10 +100,35 @@ export default function AppThemeProvider({ children }: Props) {
       default: '#0b0f19',
       paper: '#161c2a',
     };
-    const primaryColor = '#1D8BF1';
-    const primaryColorDark = '#176FCC';
-    const primaryColorLight = '#56A9F5';
-    const outlinedHoverColor = mode === 'light' ? 'rgba(29, 139, 241, 0.1)' : 'rgba(29, 139, 241, 0.3)';
+    
+    // Berechne dunklere und hellere Varianten der Brand Color
+    const hexToRgb = (hex: string) => {
+      const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+      return result ? {
+        r: parseInt(result[1], 16),
+        g: parseInt(result[2], 16),
+        b: parseInt(result[3], 16),
+      } : { r: 29, g: 139, b: 241 };
+    };
+
+    const rgbToHex = (r: number, g: number, b: number) => {
+      return '#' + [r, g, b].map(x => {
+        const hex = Math.max(0, Math.min(255, Math.round(x))).toString(16);
+        return hex.length === 1 ? '0' + hex : hex;
+      }).join('');
+    };
+
+    const rgb = hexToRgb(brandColor);
+    const primaryColor = brandColor;
+    const primaryColorDark = rgbToHex(rgb.r * 0.8, rgb.g * 0.8, rgb.b * 0.8);
+    const primaryColorLight = rgbToHex(
+      Math.min(255, rgb.r + (255 - rgb.r) * 0.3),
+      Math.min(255, rgb.g + (255 - rgb.g) * 0.3),
+      Math.min(255, rgb.b + (255 - rgb.b) * 0.3)
+    );
+    const outlinedHoverColor = mode === 'light' 
+      ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.1)` 
+      : `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.3)`;
 
     return createTheme({
       palette: {
@@ -131,7 +165,7 @@ export default function AppThemeProvider({ children }: Props) {
             outlinedPrimary: {
               borderColor: primaryColor,
               color: primaryColor,
-              backgroundColor: mode === 'light' ? '#F8FBFF' : 'rgba(29, 139, 241, 0.12)',
+              backgroundColor: mode === 'light' ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.04)` : `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.12)`,
               '&:hover': {
                 borderColor: primaryColor,
                 backgroundColor: outlinedHoverColor,
@@ -144,7 +178,7 @@ export default function AppThemeProvider({ children }: Props) {
         },
       },
     });
-  }, [mode]);
+  }, [mode, brandColor]);
 
   return (
     <ColorModeContext.Provider value={{ mode, toggleColorMode }}>

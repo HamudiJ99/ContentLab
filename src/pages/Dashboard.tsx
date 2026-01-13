@@ -25,6 +25,7 @@ import {
   DialogContent,
   DialogContentText,
   DialogActions,
+  useTheme,
 } from '@mui/material';
 import Grid from '@mui/material/Grid';
 import SchoolIcon from '@mui/icons-material/School';
@@ -45,11 +46,6 @@ import {
   serverTimestamp,
 } from 'firebase/firestore';
 import { auth, db } from '../firebase/firebaseConfig';
-
-type Category = {
-  id: string;
-  name: string;
-};
 
 type Course = {
   id: string;
@@ -101,9 +97,10 @@ const normalizePercentage = (value: unknown): number | null => {
 
 export default function Dashboard() {
   const navigate = useNavigate();
+  const theme = useTheme();
+  const primaryColor = theme.palette.primary.main;
   const [currentUser, setCurrentUser] = useState<User | null>(auth.currentUser);
   const [courses, setCourses] = useState<Course[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
   const [courseProgress, setCourseProgress] = useState<Record<string, CourseProgress>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -130,7 +127,6 @@ export default function Dashboard() {
   useEffect(() => {
     if (!currentUser) {
       setCourses([]);
-      setCategories([]);
       setLoading(false);
       return;
     }
@@ -138,16 +134,6 @@ export default function Dashboard() {
     const loadData = async () => {
       setLoading(true);
       try {
-        // Lade Kategorien
-        const categoriesSnapshot = await getDocs(
-          collection(db, 'users', currentUser.uid, 'categories')
-        );
-        const loadedCategories = categoriesSnapshot.docs.map((doc) => ({
-          id: doc.id,
-          name: doc.data().name ?? 'Kategorie',
-        }));
-        setCategories(loadedCategories);
-
         // Lade alle Kurse
         const coursesSnapshot = await getDocs(
           collection(db, 'users', currentUser.uid, 'courses')
@@ -588,7 +574,7 @@ export default function Dashboard() {
                 const progress = courseProgress[course.id];
                 const coverColor = activeTab === 2 
                   ? (course.coverColor || '#22c55e')
-                  : (course.coverColor || '#1a65ff');
+                  : (course.coverColor || primaryColor);
                 const hiddenMeta = hiddenCourses.get(course.id);
                 const isHidden = Boolean(hiddenMeta);
                   
@@ -659,7 +645,7 @@ export default function Dashboard() {
                               <Box
                                 sx={{
                                   height: '100%',
-                                  bgcolor: '#1a65ff',
+                                  bgcolor: primaryColor,
                                   width: `${progress.percentage}%`,
                                   transition: 'width 0.3s ease',
                                 }}

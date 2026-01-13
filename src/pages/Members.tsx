@@ -18,7 +18,6 @@ import {
   Avatar,
   Box,
   Button,
-  Checkbox,
   Chip,
   CircularProgress,
   Dialog,

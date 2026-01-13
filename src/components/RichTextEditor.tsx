@@ -26,7 +26,7 @@ type RichTextEditorProps = {
   minHeight?: number;
 };
 
-export default function RichTextEditor({ content, onChange, placeholder = 'Text eingeben...', minHeight = 300 }: RichTextEditorProps) {
+export default function RichTextEditor({ content, onChange, minHeight = 300 }: RichTextEditorProps) {
   const editor = useEditor({
     extensions: [
       StarterKit.configure({

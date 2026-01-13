@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useCallback, useRef, type ChangeEvent } from 'react';
-import { Link as RouterLink, useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import {
   Alert,
   Box,
@@ -16,7 +16,10 @@ import {
   Snackbar,
   Stack,
   TextField,
+  ToggleButton,
+  ToggleButtonGroup,
   Typography,
+  useTheme,
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
@@ -24,6 +27,7 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import PlayCircleOutlineIcon from '@mui/icons-material/PlayCircleOutline';
+import VideocamIcon from '@mui/icons-material/Videocam';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import {
   collection,
@@ -37,35 +41,34 @@ import {
 import { auth, db, storage } from '../firebase/firebaseConfig';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import RichTextEditor from '../components/RichTextEditor';
+import VideoRecorder from '../components/VideoRecorder';
 import { useNavigation } from '../context/NavigationContext';
 
-const brandStatusColor = '#1a65ff';
-const statusButtonActiveColor = '#1d8bf2';
-const statusStyles = {
+const getStatusStyles = (brandColor: string) => ({
   published: {
     label: 'Veröffentlicht',
     dot: '#22c55e',
-    color: brandStatusColor,
+    color: brandColor,
     chipBg: 'rgba(34, 197, 94, 0.15)',
     chipText: '#15803d',
   },
   draft: {
     label: 'Entwurf',
-    dot: '#1a65ff',
-    color: brandStatusColor,
-    chipBg: 'rgba(26, 101, 255, 0.12)',
-    chipText: '#1a65ff',
+    dot: brandColor,
+    color: brandColor,
+    chipBg: `${brandColor}20`,
+    chipText: brandColor,
   },
   disabled: {
     label: 'Deaktiviert',
     dot: '#ef4444',
-    color: brandStatusColor,
+    color: brandColor,
     chipBg: 'rgba(239, 68, 68, 0.15)',
     chipText: '#b91c1c',
   },
-} as const;
+} as const);
 
-type LessonStatus = keyof typeof statusStyles;
+type LessonStatus = 'published' | 'draft' | 'disabled';
 type LessonType = 'subchapter' | 'video' | 'pdf' | 'text';
 
 type CourseMeta = {
@@ -106,6 +109,9 @@ const emptyLessonForm: LessonFormState = {
 
 const LessonEditor = () => {
   const navigate = useNavigate();
+  const theme = useTheme();
+  const primaryColor = theme.palette.primary.main;
+  const statusStyles = useMemo(() => getStatusStyles(primaryColor), [primaryColor]);
   const { courseId, chapterId, lessonId } = useParams<{ courseId: string; chapterId: string; lessonId: string }>();
   const { registerNavigationGuard, unregisterNavigationGuard } = useNavigation();
   const [currentUser, setCurrentUser] = useState<User | null>(auth.currentUser);
@@ -126,6 +132,8 @@ const LessonEditor = () => {
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [uploadingVideo, setUploadingVideo] = useState(false);
+  const [videoUploadMode, setVideoUploadMode] = useState<'upload' | 'record'>('upload');
+  const [showVideoRecorder, setShowVideoRecorder] = useState(false);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
   const [blockedNavigation, setBlockedNavigation] = useState<(() => void) | null>(null);
@@ -454,6 +462,29 @@ const LessonEditor = () => {
     }
   };
 
+  const handleRecordedVideo = async (videoBlob: Blob) => {
+    if (!currentUser || !courseId || !chapterId || !lessonId) {
+      return;
+    }
+    
+    setUploadingVideo(true);
+    setShowVideoRecorder(false);
+    setPageError(null);
+    
+    try {
+      const storageRef = ref(storage, `users/${currentUser.uid}/courses/${courseId}/lessons/${lessonId}/lesson.webm`);
+      await uploadBytes(storageRef, videoBlob);
+      const downloadUrl = await getDownloadURL(storageRef);
+      setVideoUrl(downloadUrl);
+      setPageError(null);
+    } catch (error) {
+      console.error('Video upload failed:', error);
+      setPageError('Video konnte nicht hochgeladen werden.');
+    } finally {
+      setUploadingVideo(false);
+    }
+  };
+
   const handleSaveLesson = async () => {
     if (!lessonRef) {
       return;
@@ -567,14 +598,14 @@ const LessonEditor = () => {
             onClick={() => handleLessonStatusSelect(value as LessonStatus)}
             sx={{
               textTransform: 'none',
-              borderColor: isActive ? statusButtonActiveColor : undefined,
-              bgcolor: isActive ? statusButtonActiveColor : undefined,
+              borderColor: isActive ? primaryColor : undefined,
+              bgcolor: isActive ? primaryColor : undefined,
               color: isActive ? '#fff' : undefined,
               boxShadow: 'none',
               '&:hover': isActive
                 ? {
-                    borderColor: statusButtonActiveColor,
-                    bgcolor: statusButtonActiveColor,
+                    borderColor: primaryColor,
+                    bgcolor: primaryColor,
                   }
                 : undefined,
             }}
@@ -877,69 +908,117 @@ const LessonEditor = () => {
                 </Stack>
               ) : (
                 <Stack spacing={2}>
-                  <Box
-                    sx={{
-                      p: 3,
-                      border: '2px dashed',
-                      borderColor: 'divider',
-                      borderRadius: 2,
-                      textAlign: 'center',
-                      bgcolor: 'background.default',
+                  <ToggleButtonGroup
+                    value={videoUploadMode}
+                    exclusive
+                    onChange={(_, newMode) => {
+                      if (newMode) setVideoUploadMode(newMode);
                     }}
+                    fullWidth
                   >
-                    <PlayCircleOutlineIcon sx={{ fontSize: 64, color: 'text.secondary', mb: 2 }} />
-                    <Typography variant="h6" gutterBottom>
-                      Kein Video hochgeladen
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                      Lade eine Video-Datei hoch, die in dieser Lektion angezeigt werden soll.
-                    </Typography>
-                    <Button
-                      variant="outlined"
-                      component="label"
-                      startIcon={<UploadFileIcon />}
-                    >
-                      Video auswählen
-                      <input
-                        type="file"
-                        hidden
-                        accept="video/*"
-                        onChange={handleVideoFileChange}
-                      />
-                    </Button>
-                  </Box>
-                  {videoFile && (
+                    <ToggleButton value="upload">
+                      <Stack direction="row" spacing={1} alignItems="center">
+                        <UploadFileIcon fontSize="small" />
+                        <Typography>Hochladen</Typography>
+                      </Stack>
+                    </ToggleButton>
+                    <ToggleButton value="record">
+                      <Stack direction="row" spacing={1} alignItems="center">
+                        <VideocamIcon fontSize="small" />
+                        <Typography>Aufnehmen</Typography>
+                      </Stack>
+                    </ToggleButton>
+                  </ToggleButtonGroup>
+                  
+                  {videoUploadMode === 'upload' ? (
+                    <>
+                      <Box
+                        sx={{
+                          p: 3,
+                          border: '2px dashed',
+                          borderColor: 'divider',
+                          borderRadius: 2,
+                          textAlign: 'center',
+                          bgcolor: 'background.default',
+                        }}
+                      >
+                        <PlayCircleOutlineIcon sx={{ fontSize: 64, color: 'text.secondary', mb: 2 }} />
+                        <Typography variant="h6" gutterBottom>
+                          Kein Video hochgeladen
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                          Lade eine Video-Datei hoch, die in dieser Lektion angezeigt werden soll.
+                        </Typography>
+                        <Button
+                          variant="outlined"
+                          component="label"
+                          startIcon={<UploadFileIcon />}
+                        >
+                          Video auswählen
+                          <input
+                            type="file"
+                            hidden
+                            accept="video/*"
+                            onChange={handleVideoFileChange}
+                          />
+                        </Button>
+                      </Box>
+                      {videoFile && (
+                        <Box
+                          sx={{
+                            p: 2,
+                            border: '1px solid',
+                            borderColor: 'divider',
+                            borderRadius: 1,
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 2,
+                          }}
+                        >
+                          <PlayCircleOutlineIcon sx={{ color: 'primary.main' }} />
+                          <Box sx={{ flex: 1 }}>
+                            <Typography variant="body2" fontWeight={600}>
+                              {videoFile.name}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              {(videoFile.size / 1024 / 1024).toFixed(2)} MB
+                            </Typography>
+                          </Box>
+                          <Button
+                            variant="contained"
+                            onClick={handleUploadVideo}
+                            disabled={uploadingVideo}
+                          >
+                            {uploadingVideo ? <CircularProgress size={24} /> : 'Hochladen'}
+                          </Button>
+                        </Box>
+                      )}
+                    </>
+                  ) : (
                     <Box
                       sx={{
-                        p: 2,
-                        border: '1px solid',
+                        p: 3,
+                        border: '2px dashed',
                         borderColor: 'divider',
-                        borderRadius: 1,
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 2,
+                        borderRadius: 2,
+                        textAlign: 'center',
+                        bgcolor: 'background.default',
                       }}
                     >
-                      <PlayCircleOutlineIcon sx={{ color: 'primary.main' }} />
-                      <Box sx={{ flex: 1 }}>
-                        <Typography variant="body2" fontWeight={600}>
-                          {videoFile.name}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          {(videoFile.size / 1024 / 1024).toFixed(2)} MB
-                        </Typography>
-                      </Box>
+                      <VideocamIcon sx={{ fontSize: 64, color: 'text.secondary', mb: 2 }} />
+                      <Typography variant="h6" gutterBottom>
+                        Video aufnehmen
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                        Nimm ein Video mit deiner Webcam oder deinem Bildschirm auf.
+                      </Typography>
                       <Button
                         variant="contained"
-                        size="small"
-                        onClick={handleUploadVideo}
-                        disabled={uploadingVideo}
+                        startIcon={<VideocamIcon />}
+                        onClick={() => setShowVideoRecorder(true)}
                       >
-                        {uploadingVideo ? 'Lädt hoch...' : 'Hochladen'}
+                        Aufnahme starten
                       </Button>
-                      <IconButton size="small" onClick={() => setVideoFile(null)}>
-                        <DeleteOutlineIcon fontSize="small" />
-                      </IconButton>
                     </Box>
                   )}
                 </Stack>
@@ -1029,6 +1108,14 @@ const LessonEditor = () => {
           Änderungen erfolgreich gespeichert
         </Alert>
       </Snackbar>
+
+      {/* Video Recorder Dialog */}
+      {showVideoRecorder && (
+        <VideoRecorder
+          onSave={handleRecordedVideo}
+          onCancel={() => setShowVideoRecorder(false)}
+        />
+      )}
     </Box>
   );
 };

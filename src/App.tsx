@@ -41,9 +41,10 @@ function App() {
       <NavigationProvider>
         <Routes>
           <Route path="/auth" element={<SignIn />} />
+          <Route path="/signin" element={<SignIn />} />
           <Route element={<AppLayout />}>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/home" element={<Home />} />
+            <Route path="/" element={<Home />} />
+            <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/courses" element={<Courses />} />
             <Route path="/courses/:courseId" element={<CourseEditor />} />
             <Route path="/courses/:courseId/chapters/:chapterId/lessons/:lessonId" element={<LessonEditor />} />

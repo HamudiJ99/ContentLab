@@ -11,7 +11,7 @@ const NavigationContext = createContext<NavigationContextType | null>(null);
 export function NavigationProvider({ children }: { children: ReactNode }) {
   const [navigationGuard, setNavigationGuard] = useState<(() => boolean) | null>(null);
 
-  const confirmNavigation = useCallback(async (path: string): Promise<boolean> => {
+  const confirmNavigation = useCallback(async (): Promise<boolean> => {
     if (navigationGuard && !navigationGuard()) {
       return false;
     }

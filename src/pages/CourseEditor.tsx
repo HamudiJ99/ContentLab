@@ -32,6 +32,7 @@ import {
   TextField,
   Tooltip,
   Typography,
+  useTheme,
 } from '@mui/material';
 import type { SelectChangeEvent } from '@mui/material/Select';
 import AddIcon from '@mui/icons-material/Add';
@@ -72,32 +73,31 @@ import type { DragEndEvent, DragStartEvent } from '@dnd-kit/core';
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 
-const brandStatusColor = '#1a65ff';
-const statusStyles = {
+const getStatusStyles = (brandColor: string) => ({
   published: {
     label: 'Veröffentlicht',
     dot: '#22c55e',
-    color: brandStatusColor,
+    color: brandColor,
     chipBg: 'rgba(34, 197, 94, 0.15)',
     chipText: '#15803d',
   },
   draft: {
     label: 'Entwurf',
-    dot: '#1a65ff',
-    color: brandStatusColor,
-    chipBg: 'rgba(26, 101, 255, 0.12)',
-    chipText: '#1a65ff',
+    dot: brandColor,
+    color: brandColor,
+    chipBg: `${brandColor}20`,
+    chipText: brandColor,
   },
   disabled: {
     label: 'Deaktiviert',
     dot: '#ef4444',
-    color: brandStatusColor,
+    color: brandColor,
     chipBg: 'rgba(239, 68, 68, 0.15)',
     chipText: '#b91c1c',
   },
-} as const;
+} as const);
 
-type ChapterStatus = keyof typeof statusStyles;
+type ChapterStatus = 'published' | 'draft' | 'disabled';
 
 type Category = {
   id: string;
@@ -202,7 +202,7 @@ const cropAspectPresets: Array<{ label: string; value: CropPreset; aspect?: numb
 ];
 
 const coverColorOptions: Array<{ label: string; value: string; swatch?: string }> = [
-  { label: 'Standardfarbe', value: '', swatch: '#1a65ff' },
+  { label: 'Standardfarbe', value: '' },
   { label: 'Rot', value: '#ef4444' },
   { label: 'Magenta', value: '#ec4899' },
   { label: 'Mandarine', value: '#f97316' },
@@ -231,6 +231,9 @@ const lessonTypeConfig: Record<LessonType, { label: string; icon: ReactNode; col
 const CourseEditor = () => {
   const { courseId } = useParams<{ courseId: string }>();
   const navigate = useNavigate();
+  const theme = useTheme();
+  const primaryColor = theme.palette.primary.main;
+  const statusStyles = useMemo(() => getStatusStyles(primaryColor), [primaryColor]);
   const categoryLabelId = 'course-editor-category-label';
   const categorySelectId = 'course-editor-category-select';
   const [currentUser, setCurrentUser] = useState<User | null>(auth.currentUser);
@@ -1438,6 +1441,7 @@ const CourseEditor = () => {
                       onLessonClick={handleLessonCardClick}
                       onAddLesson={handleOpenLessonDialog}
                       onLessonActionsMenuOpen={handleLessonActionsMenuOpen}
+                      statusStyles={statusStyles}
                     />
                   ))}
                 </Stack>
@@ -1461,7 +1465,7 @@ const CourseEditor = () => {
                     </Stack>
                   </Paper>
                 ) : draggingLesson ? (
-                  <LessonDragPreview lesson={draggingLesson} />
+                  <LessonDragPreview lesson={draggingLesson} statusStyles={statusStyles} />
                 ) : null}
               </DragOverlay>
             </DndContext>
@@ -1633,7 +1637,7 @@ const CourseEditor = () => {
                         >
                           {coverColorOptions.map(({ label, value, swatch }) => {
                             const selected = courseForm.coverColor === value;
-                            const swatchColor = (swatch ?? value) || '#1a65ff';
+                            const swatchColor = (swatch ?? value) || primaryColor;
                             return (
                               <Tooltip key={value || label} title={label} placement="top" arrow>
                                 <IconButton
@@ -1767,7 +1771,7 @@ const CourseEditor = () => {
                       >
                         {coverColorOptions.map(({ label, value, swatch }) => {
                           const selected = chapterForm.coverColor === value;
-                          const swatchColor = (swatch ?? value) || '#1a65ff';
+                          const swatchColor = (swatch ?? value) || primaryColor;
                           return (
                             <Tooltip key={value || label} title={label} placement="top" arrow>
                               <IconButton
@@ -2090,11 +2094,10 @@ type SortableLessonCardProps = {
   onLessonActionsMenuOpen: (chapterId: string, lessonId: string, anchorEl: HTMLElement) => void;
 };
 
-const SortableLessonCard = ({ lesson, chapterId, containerId, onLessonClick, onLessonActionsMenuOpen }: SortableLessonCardProps) => {
+const SortableLessonCard = ({ lesson, chapterId, containerId, onLessonClick, onLessonActionsMenuOpen, statusStyles }: SortableLessonCardProps & { statusStyles: ReturnType<typeof getStatusStyles> }) => {
   const typeConfig = lessonTypeConfig[lesson.type] ?? lessonTypeConfig.text;
   const lessonStatus = (lesson.status as LessonStatus) ?? 'draft';
   const statusConfig = statusStyles[lessonStatus];
-  const isTextLesson = lesson.type === 'text';
   const isClickableLesson = lesson.type === 'text' || lesson.type === 'pdf' || lesson.type === 'video';
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: lesson.id,
@@ -2170,7 +2173,7 @@ const SortableLessonCard = ({ lesson, chapterId, containerId, onLessonClick, onL
   );
 };
 
-const LessonDragPreview = ({ lesson }: { lesson: Lesson }) => {
+const LessonDragPreview = ({ lesson, statusStyles }: { lesson: Lesson; statusStyles: ReturnType<typeof getStatusStyles> }) => {
   const typeConfig = lessonTypeConfig[lesson.type] ?? lessonTypeConfig.text;
   const lessonStatus = (lesson.status as LessonStatus) ?? 'draft';
   const statusConfig = statusStyles[lessonStatus];
@@ -2232,7 +2235,8 @@ const ChapterCard = ({
   onLessonClick,
   onAddLesson,
   onLessonActionsMenuOpen,
-}: ChapterCardProps) => {
+  statusStyles,
+}: ChapterCardProps & { statusStyles: ReturnType<typeof getStatusStyles> }) => {
   const statusConfig = statusStyles[chapter.status];
   const avatarColor = chapter.coverColor || 'primary.main';
   const standaloneLessons = lessons.filter((lesson) => lesson.type !== 'subchapter' && !lesson.parentLessonId);
@@ -2328,6 +2332,7 @@ const ChapterCard = ({
                         containerId={getChapterRootContainerId(chapter.id)}
                         onLessonClick={onLessonClick}
                         onLessonActionsMenuOpen={onLessonActionsMenuOpen}
+                        statusStyles={statusStyles}
                       />
                     ))}
                   </Stack>
@@ -2395,6 +2400,7 @@ const ChapterCard = ({
                                 containerId={containerId}
                                 onLessonClick={onLessonClick}
                                 onLessonActionsMenuOpen={onLessonActionsMenuOpen}
+                                statusStyles={statusStyles}
                               />
                             ))}
                           </Stack>

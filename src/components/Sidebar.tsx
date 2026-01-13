@@ -7,8 +7,8 @@ import GroupOutlinedIcon from '@mui/icons-material/GroupOutlined';
 import { useNavigation } from '../context/NavigationContext';
 
 const navigationItems = [
-  { label: 'Home', icon: <HomeOutlinedIcon />, path: '/home' },
-  { label: 'Dashboard', icon: <DashboardIcon />, path: '/' },
+  { label: 'Home', icon: <HomeOutlinedIcon />, path: '/' },
+  { label: 'Dashboard', icon: <DashboardIcon />, path: '/dashboard' },
   { label: 'Kurse', icon: <SchoolIcon />, path: '/courses' },
   { label: 'Mitglieder', icon: <GroupOutlinedIcon />, path: '/members' },
 ];
