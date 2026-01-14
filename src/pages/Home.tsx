@@ -190,13 +190,11 @@ export default function Home() {
 
       setRecentCourses(coursesData);
 
-      // Lade globale Statistiken
-      const usersSnapshot = await getDocs(collection(db, 'users'));
-      
+      // Setze Statistiken (ohne globale User-Anzahl wegen Permissions)
       setStats({
         courses: coursesData.length,
         lessons: totalLessons,
-        members: usersSnapshot.size,
+        members: 1, // Aktueller Benutzer
       });
     } catch (error) {
       console.error('Fehler beim Laden der Daten:', error);

@@ -35,9 +35,11 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDocs,
   increment,
   onSnapshot,
   serverTimestamp,
+  setDoc,
   updateDoc,
 } from 'firebase/firestore';
 import { auth, db, storage } from '../firebase/firebaseConfig';
@@ -427,14 +429,100 @@ const LessonEditor = () => {
       const storageRef = ref(storage, `users/${currentUser.uid}/courses/${courseId}/lessons/${lessonId}/lesson.${fileExtension}`);
       await uploadBytes(storageRef, videoFile);
       const downloadUrl = await getDownloadURL(storageRef);
+      
+      // Berechne die Videodauer
+      const videoDuration = await new Promise<number>((resolve) => {
+        const video = document.createElement('video');
+        video.preload = 'metadata';
+        video.onloadedmetadata = () => {
+          window.URL.revokeObjectURL(video.src);
+          resolve(Math.round(video.duration));
+        };
+        video.onerror = () => {
+          resolve(0);
+        };
+        video.src = URL.createObjectURL(videoFile);
+      });
+      
       setVideoUrl(downloadUrl);
       setVideoFile(null);
+      
+      // Speichere die Videodauer in Firestore
+      if (lessonRef && videoDuration > 0) {
+        await updateDoc(lessonRef, { 
+          videoUrl: downloadUrl,
+          videoDuration: videoDuration
+        });
+      }
+      
+      // Aktualisiere Kursdauer
+      await updateCourseDuration();
+      
       setPageError(null);
     } catch (error) {
       console.error('Video upload failed:', error);
       setPageError('Video konnte nicht hochgeladen werden.');
     } finally {
       setUploadingVideo(false);
+    }
+  };
+
+  const updateCourseDuration = async () => {
+    if (!currentUser || !courseId) return;
+    
+    try {
+      console.log('updateCourseDuration: Starting calculation for course', courseId);
+      // Berechne Gesamtdauer aller Videos im Kurs
+      let totalSeconds = 0;
+      const chaptersSnapshot = await getDocs(
+        collection(db, 'users', currentUser.uid, 'courses', courseId, 'chapters')
+      );
+      
+      console.log('updateCourseDuration: Found', chaptersSnapshot.docs.length, 'chapters');
+      
+      for (const chapterDoc of chaptersSnapshot.docs) {
+        const lessonsSnapshot = await getDocs(collection(chapterDoc.ref, 'lessons'));
+        console.log('updateCourseDuration: Chapter', chapterDoc.id, 'has', lessonsSnapshot.docs.length, 'lessons');
+        
+        for (const lessonDoc of lessonsSnapshot.docs) {
+          const lessonData = lessonDoc.data();
+          console.log('updateCourseDuration: Lesson', lessonDoc.id, 'videoDuration:', lessonData.videoDuration);
+          
+          if (lessonData.videoDuration && typeof lessonData.videoDuration === 'number' && isFinite(lessonData.videoDuration)) {
+            totalSeconds += lessonData.videoDuration;
+            console.log('updateCourseDuration: Added', lessonData.videoDuration, 'seconds. Total now:', totalSeconds);
+          }
+        }
+      }
+      
+      console.log('updateCourseDuration: Total duration in seconds:', totalSeconds);
+      
+      // Formatiere Dauer
+      let formattedDuration = '0:00';
+      if (isFinite(totalSeconds) && totalSeconds > 0) {
+        const hours = Math.floor(totalSeconds / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        const seconds = Math.floor(totalSeconds % 60);
+        
+        if (hours > 0) {
+          formattedDuration = `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+        } else {
+          formattedDuration = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+        }
+      }
+      
+      console.log('updateCourseDuration: Formatted duration:', formattedDuration);
+      
+      // Aktualisiere Kurs
+      await setDoc(
+        doc(db, 'users', currentUser.uid, 'courses', courseId),
+        { duration: formattedDuration },
+        { merge: true }
+      );
+      
+      console.log('updateCourseDuration: Course document updated successfully');
+    } catch (error) {
+      console.error('Could not update course duration:', error);
     }
   };
 
@@ -454,8 +542,10 @@ const LessonEditor = () => {
       await deleteObject(storageRef).catch(() => {});
       setVideoUrl(null);
       if (lessonRef) {
-        await updateDoc(lessonRef, { videoUrl: null });
+        await updateDoc(lessonRef, { videoUrl: null, videoDuration: null });
       }
+      // Aktualisiere Kursdauer
+      await updateCourseDuration();
     } catch (error) {
       console.error('Video removal failed:', error);
       setPageError('Video konnte nicht entfernt werden.');
@@ -464,10 +554,13 @@ const LessonEditor = () => {
     }
   };
 
-  const handleRecordedVideo = async (videoBlob: Blob) => {
+  const handleRecordedVideo = async (videoBlob: Blob, duration: number) => {
     if (!currentUser || !courseId || !chapterId || !lessonId) {
+      console.log('handleRecordedVideo aborted: missing params');
       return;
     }
+    
+    console.log('handleRecordedVideo called with duration:', duration);
     
     setUploadingVideo(true);
     setShowVideoRecorder(false);
@@ -478,6 +571,24 @@ const LessonEditor = () => {
       await uploadBytes(storageRef, videoBlob);
       const downloadUrl = await getDownloadURL(storageRef);
       setVideoUrl(downloadUrl);
+      
+      const roundedDuration = Math.round(duration);
+      console.log('Saving videoDuration to Firestore:', roundedDuration);
+      
+      // Speichere die Videodauer in Firestore
+      if (lessonRef) {
+        await updateDoc(lessonRef, { 
+          videoUrl: downloadUrl,
+          videoDuration: roundedDuration
+        });
+        console.log('videoDuration saved successfully');
+      }
+      
+      // Aktualisiere Kursdauer
+      console.log('Calling updateCourseDuration...');
+      await updateCourseDuration();
+      console.log('updateCourseDuration completed');
+      
       setPageError(null);
     } catch (error) {
       console.error('Video upload failed:', error);

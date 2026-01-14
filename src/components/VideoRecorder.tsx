@@ -32,7 +32,7 @@ type RecordingMode = 'webcam' | 'screen' | 'both';
 type RecordingState = 'idle' | 'requesting' | 'ready' | 'recording' | 'paused' | 'stopped' | 'reviewing';
 
 type VideoRecorderProps = {
-  onSave: (videoBlob: Blob) => void;
+  onSave: (videoBlob: Blob, duration: number) => void;
   onCancel: () => void;
 };
 
@@ -207,12 +207,21 @@ export default function VideoRecorder({ onSave, onCancel }: VideoRecorderProps) 
         const blob = new Blob(chunksRef.current, { type: 'video/webm' });
         setRecordedBlob(blob);
         
+        // Verwende recordingDuration als initiale Duration
+        const initialDuration = recordingDuration;
+        if (initialDuration > 0) {
+          setVideoDuration(initialDuration);
+          setTrimStart(0);
+          setTrimEnd(initialDuration);
+        }
+        
         if (videoPreviewRef.current) {
           videoPreviewRef.current.srcObject = null;
           const url = URL.createObjectURL(blob);
           videoPreviewRef.current.src = url;
           videoPreviewRef.current.onloadedmetadata = () => {
             const duration = videoPreviewRef.current?.duration || 0;
+            // Nur überschreiben wenn eine gültige Duration verfügbar ist
             if (duration && isFinite(duration) && duration > 0) {
               setVideoDuration(duration);
               setTrimStart(0);
@@ -318,7 +327,10 @@ export default function VideoRecorder({ onSave, onCancel }: VideoRecorderProps) 
 
   const handleSave = () => {
     if (recordedBlob) {
-      onSave(recordedBlob);
+      // Verwende videoDuration wenn verfügbar, sonst recordingDuration als Fallback
+      const finalDuration = videoDuration > 0 ? videoDuration : recordingDuration;
+      console.log('VideoRecorder handleSave: videoDuration =', videoDuration, ', recordingDuration =', recordingDuration, ', using =', finalDuration);
+      onSave(recordedBlob, finalDuration);
     }
   };
 

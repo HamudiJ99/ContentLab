@@ -50,6 +50,9 @@ import PictureAsPdfOutlinedIcon from '@mui/icons-material/PictureAsPdfOutlined';
 import ArticleOutlinedIcon from '@mui/icons-material/ArticleOutlined';
 import FolderOpenOutlinedIcon from '@mui/icons-material/FolderOpenOutlined';
 import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
+import CheckBoxOutlineBlankIcon from '@mui/icons-material/CheckBoxOutlineBlank';
+import DeleteSweepIcon from '@mui/icons-material/DeleteSweep';
+import CloseIcon from '@mui/icons-material/Close';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import {
   collection,
@@ -328,6 +331,8 @@ const CourseEditor = () => {
   const [zoom, setZoom] = useState(1);
   const [croppedAreaPixels, setCroppedAreaPixels] = useState<Area | null>(null);
   const [cropPreset, setCropPreset] = useState<CropPreset>('square');
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedLessons, setSelectedLessons] = useState<Set<string>>(new Set());
   const cropAspect = useMemo(() => {
     const preset = cropAspectPresets.find((option) => option.value === cropPreset);
     return preset?.aspect;
@@ -974,6 +979,58 @@ const CourseEditor = () => {
     }
   };
 
+  const handleDeleteSelectedLessons = async () => {
+    if (!courseRef || selectedLessons.size === 0) {
+      return;
+    }
+    
+    const count = selectedLessons.size;
+    if (!window.confirm(`${count} Lektion${count === 1 ? '' : 'en'} wirklich löschen?`)) {
+      return;
+    }
+    
+    try {
+      const batch = writeBatch(db);
+      let regularLessonsCount = 0;
+      
+      for (const lessonId of selectedLessons) {
+        // Finde die Lektion in allen Kapiteln
+        let found = false;
+        for (const chapter of chapters) {
+          const lessons = lessonsByChapter[chapter.id] ?? [];
+          const lesson = lessons.find(l => l.id === lessonId);
+          if (lesson) {
+            const chapterRef = doc(courseRef, 'chapters', chapter.id);
+            const lessonRef = doc(chapterRef, 'lessons', lessonId);
+            batch.delete(lessonRef);
+            
+            if (lesson.type !== 'subchapter') {
+              regularLessonsCount++;
+            }
+            found = true;
+            break;
+          }
+        }
+      }
+      
+      // Aktualisiere Kurs-Lektionenzähler
+      if (regularLessonsCount > 0) {
+        batch.update(courseRef, { lessons: increment(-regularLessonsCount) });
+      }
+      
+      await batch.commit();
+      
+      // Auswahl zurücksetzen
+      setSelectedLessons(new Set());
+      setSelectionMode(false);
+      
+      void refreshCourseAggregates();
+    } catch (error) {
+      console.error('Error deleting lessons:', error);
+      setPageError('Lektionen konnten nicht gelöscht werden.');
+    }
+  };
+
   const handleDuplicateLesson = async (chapterId: string, lessonId: string) => {
     if (!courseRef) {
       return;
@@ -1398,22 +1455,80 @@ const CourseEditor = () => {
               </Typography>
             </Box>
             <Stack direction="row" spacing={1.5} alignItems="center">
-              <Button
-                variant="outlined"
-                startIcon={<SettingsOutlinedIcon />}
-                onClick={handleOpenPropertiesDialog}
-                sx={{ textTransform: 'none' }}
-              >
-                Eigenschaften
-              </Button>
-              <Button
-                variant="contained"
-                startIcon={<AddIcon />}
-                sx={{ textTransform: 'none' }}
-                onClick={() => handleOpenChapterDialog('create')}
-              >
-                Kapitel
-              </Button>
+              {selectionMode ? (
+                <>
+                  <Typography variant="body2" color="text.secondary">
+                    {selectedLessons.size} ausgewählt
+                  </Typography>
+                  <Button
+                    variant="outlined"
+                    onClick={() => {
+                      // Alle Lektionen aus allen Kapiteln sammeln
+                      const allLessonIds = new Set<string>();
+                      chapters.forEach((chapter) => {
+                        const lessons = lessonsByChapter[chapter.id] ?? [];
+                        lessons.forEach((lesson) => {
+                          if (lesson.type !== 'subchapter') {
+                            allLessonIds.add(lesson.id);
+                          }
+                        });
+                      });
+                      setSelectedLessons(allLessonIds);
+                    }}
+                    sx={{ textTransform: 'none' }}
+                  >
+                    Alle auswählen
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    color="error"
+                    startIcon={<DeleteSweepIcon />}
+                    onClick={handleDeleteSelectedLessons}
+                    disabled={selectedLessons.size === 0}
+                    sx={{ textTransform: 'none' }}
+                  >
+                    Löschen ({selectedLessons.size})
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    startIcon={<CloseIcon />}
+                    onClick={() => {
+                      setSelectionMode(false);
+                      setSelectedLessons(new Set());
+                    }}
+                    sx={{ textTransform: 'none' }}
+                  >
+                    Abbrechen
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Button
+                    variant="outlined"
+                    startIcon={<CheckBoxOutlineBlankIcon />}
+                    onClick={() => setSelectionMode(true)}
+                    sx={{ textTransform: 'none' }}
+                  >
+                    Auswählen
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    startIcon={<SettingsOutlinedIcon />}
+                    onClick={handleOpenPropertiesDialog}
+                    sx={{ textTransform: 'none' }}
+                  >
+                    Eigenschaften
+                  </Button>
+                  <Button
+                    variant="contained"
+                    startIcon={<AddIcon />}
+                    sx={{ textTransform: 'none' }}
+                    onClick={() => handleOpenChapterDialog('create')}
+                  >
+                    Kapitel
+                  </Button>
+                </>
+              )}
               <Tooltip title="Alle Kapitel einklappen">
                 <IconButton onClick={collapseAll}>
                   <KeyboardArrowUpIcon />
@@ -1469,6 +1584,17 @@ const CourseEditor = () => {
                       onAddLesson={handleOpenLessonDialog}
                       onLessonActionsMenuOpen={handleLessonActionsMenuOpen}
                       statusStyles={statusStyles}
+                      selectionMode={selectionMode}
+                      selectedLessons={selectedLessons}
+                      onToggleLessonSelection={(lessonId) => {
+                        const newSelection = new Set(selectedLessons);
+                        if (newSelection.has(lessonId)) {
+                          newSelection.delete(lessonId);
+                        } else {
+                          newSelection.add(lessonId);
+                        }
+                        setSelectedLessons(newSelection);
+                      }}
                     />
                   ))}
                 </Stack>
@@ -2119,9 +2245,22 @@ type SortableLessonCardProps = {
   containerId: string;
   onLessonClick: (chapterId: string, lesson: Lesson) => void;
   onLessonActionsMenuOpen: (chapterId: string, lessonId: string, anchorEl: HTMLElement) => void;
+  selectionMode?: boolean;
+  isSelected?: boolean;
+  onToggleSelection?: () => void;
 };
 
-const SortableLessonCard = ({ lesson, chapterId, containerId, onLessonClick, onLessonActionsMenuOpen, statusStyles }: SortableLessonCardProps & { statusStyles: ReturnType<typeof getStatusStyles> }) => {
+const SortableLessonCard = ({ 
+  lesson, 
+  chapterId, 
+  containerId, 
+  onLessonClick, 
+  onLessonActionsMenuOpen, 
+  statusStyles,
+  selectionMode = false,
+  isSelected = false,
+  onToggleSelection,
+}: SortableLessonCardProps & { statusStyles: ReturnType<typeof getStatusStyles> }) => {
   const typeConfig = lessonTypeConfig[lesson.type] ?? lessonTypeConfig.text;
   const lessonStatus = (lesson.status as LessonStatus) ?? 'draft';
   const statusConfig = statusStyles[lessonStatus];
@@ -2148,19 +2287,28 @@ const SortableLessonCard = ({ lesson, chapterId, containerId, onLessonClick, onL
         opacity: isDragging ? 0.6 : 1,
         transform: CSS.Transform.toString(transform),
         transition,
+        border: (theme) => isSelected ? `2px solid ${theme.palette.primary.main}` : undefined,
       }}
     >
       <Stack direction="row" spacing={2} alignItems="center">
+        {selectionMode && (
+          <Checkbox
+            checked={isSelected}
+            onChange={onToggleSelection}
+            onClick={(e) => e.stopPropagation()}
+            color="primary"
+          />
+        )}
         <Avatar 
           variant="rounded" 
           sx={{ width: 48, height: 48, bgcolor: typeConfig.color, color: '#fff' }}
-          onClick={isClickableLesson ? () => onLessonClick(chapterId, lesson) : undefined}
+          onClick={isClickableLesson && !selectionMode ? () => onLessonClick(chapterId, lesson) : undefined}
         >
           {typeConfig.icon}
         </Avatar>
         <Box 
-          sx={{ flex: 1, cursor: isClickableLesson ? 'pointer' : 'default' }}
-          onClick={isClickableLesson ? () => onLessonClick(chapterId, lesson) : undefined}
+          sx={{ flex: 1, cursor: isClickableLesson && !selectionMode ? 'pointer' : 'default' }}
+          onClick={isClickableLesson && !selectionMode ? () => onLessonClick(chapterId, lesson) : undefined}
         >
           <Typography fontWeight={600}>{lesson.title}</Typography>
           <Typography variant="caption" color="text.secondary">
@@ -2250,6 +2398,9 @@ type ChapterCardProps = {
   onLessonClick: (chapterId: string, lesson: Lesson) => void;
   onAddLesson: (chapterId: string, parentLessonId?: string | null) => void;
   onLessonActionsMenuOpen: (chapterId: string, lessonId: string, anchorEl: HTMLElement) => void;
+  selectionMode?: boolean;
+  selectedLessons?: Set<string>;
+  onToggleLessonSelection?: (lessonId: string) => void;
 };
 
 const ChapterCard = ({
@@ -2263,6 +2414,9 @@ const ChapterCard = ({
   onAddLesson,
   onLessonActionsMenuOpen,
   statusStyles,
+  selectionMode = false,
+  selectedLessons = new Set(),
+  onToggleLessonSelection,
 }: ChapterCardProps & { statusStyles: ReturnType<typeof getStatusStyles> }) => {
   const statusConfig = statusStyles[chapter.status];
   const avatarColor = chapter.coverColor || 'primary.main';
@@ -2360,6 +2514,9 @@ const ChapterCard = ({
                         onLessonClick={onLessonClick}
                         onLessonActionsMenuOpen={onLessonActionsMenuOpen}
                         statusStyles={statusStyles}
+                        selectionMode={selectionMode}
+                        isSelected={selectedLessons.has(lesson.id)}
+                        onToggleSelection={onToggleLessonSelection ? () => onToggleLessonSelection(lesson.id) : undefined}
                       />
                     ))}
                   </Stack>
@@ -2428,6 +2585,9 @@ const ChapterCard = ({
                                 onLessonClick={onLessonClick}
                                 onLessonActionsMenuOpen={onLessonActionsMenuOpen}
                                 statusStyles={statusStyles}
+                                selectionMode={selectionMode}
+                                isSelected={selectedLessons.has(lesson.id)}
+                                onToggleSelection={onToggleLessonSelection ? () => onToggleLessonSelection(lesson.id) : undefined}
                               />
                             ))}
                           </Stack>

@@ -278,22 +278,28 @@ const Courses = () => {
               
               for (const lessonDoc of lessonsSnapshot.docs) {
                 const lessonData = lessonDoc.data();
-                if (lessonData.videoDuration && typeof lessonData.videoDuration === 'number') {
+                
+                // Addiere videoDuration wenn vorhanden
+                if (lessonData.videoDuration && typeof lessonData.videoDuration === 'number' && isFinite(lessonData.videoDuration)) {
                   totalSeconds += lessonData.videoDuration;
                 }
               }
             }
             
             // Konvertiere Sekunden zu MM:SS oder HH:MM:SS Format
-            const hours = Math.floor(totalSeconds / 3600);
-            const minutes = Math.floor((totalSeconds % 3600) / 60);
-            const seconds = Math.floor(totalSeconds % 60);
-            
             let calculatedDuration = '0:00';
-            if (hours > 0) {
-              calculatedDuration = `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-            } else {
-              calculatedDuration = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+            
+            // Prüfe ob totalSeconds gültig ist
+            if (isFinite(totalSeconds) && totalSeconds > 0) {
+              const hours = Math.floor(totalSeconds / 3600);
+              const minutes = Math.floor((totalSeconds % 3600) / 60);
+              const seconds = Math.floor(totalSeconds % 60);
+              
+              if (hours > 0) {
+                calculatedDuration = `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+              } else {
+                calculatedDuration = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+              }
             }
             
             // Update Firestore if duration changed
