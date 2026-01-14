@@ -121,7 +121,7 @@ export default function Home() {
 
   const loadUserData = async (userId: string) => {
     try {
-      // Lade Kurse des Benutzers
+      // Lade Kurse des Benutzers (selbst erstellt)
       const coursesRef = collection(db, 'users', userId, 'courses');
       const coursesSnapshot = await getDocs(coursesRef);
       
@@ -156,6 +156,20 @@ export default function Home() {
 
         totalLessons += publishedLessons;
 
+        // Sammle alle IDs der veröffentlichten Lektionen
+        const publishedLessonIds: string[] = [];
+        for (const chapterDoc of publishedChapters) {
+          const lessonsSnapshot = await getDocs(
+            collection(chapterDoc.ref, 'lessons')
+          );
+          lessonsSnapshot.docs.forEach((lessonDoc) => {
+            const lessonData = lessonDoc.data();
+            if (lessonData.status === 'published' && lessonData.type !== 'subchapter') {
+              publishedLessonIds.push(lessonDoc.id);
+            }
+          });
+        }
+
         // Lade Fortschritt für diesen Kurs
         const progressDoc = await getDoc(
           doc(db, 'users', userId, 'courseProgress', courseDoc.id)
@@ -164,15 +178,14 @@ export default function Home() {
         let progress = 0;
         if (progressDoc.exists()) {
           const progressData = progressDoc.data();
-          const completedLessons = Array.isArray(progressData.completedLessons)
-            ? progressData.completedLessons.length
-            : 0;
-          const totalLessonCount = progressData.totalLessons || publishedLessons;
+          // Filtere completedLessons: Behalte nur IDs, die in publishedLessonIds existieren
+          const validCompletedLessons = Array.isArray(progressData.completedLessons)
+            ? progressData.completedLessons.filter((id: string) => publishedLessonIds.includes(id))
+            : [];
+          const completedCount = validCompletedLessons.length;
           
-          if (totalLessonCount > 0) {
-            progress = Math.round((completedLessons / totalLessonCount) * 100);
-          } else if (progressData.percentage !== undefined) {
-            progress = progressData.percentage;
+          if (publishedLessons > 0) {
+            progress = Math.round((completedCount / publishedLessons) * 100);
           }
         }
 
@@ -186,6 +199,101 @@ export default function Home() {
           createdBy: courseData.createdBy,
           progress,
         });
+      }
+
+      // Lade auch enrolled Kurse (Einladungen)
+      const enrollmentsSnapshot = await getDocs(
+        collection(db, 'users', userId, 'enrollments')
+      );
+
+      for (const enrollmentDoc of enrollmentsSnapshot.docs) {
+        const enrollmentData = enrollmentDoc.data();
+        const ownerId = enrollmentData.ownerId;
+        const courseId = enrollmentDoc.id;
+
+        if (!ownerId) continue;
+
+        try {
+          // Lade den Kurs vom Owner
+          const courseDocSnapshot = await getDoc(
+            doc(db, 'users', ownerId, 'courses', courseId)
+          );
+
+          if (!courseDocSnapshot.exists()) continue;
+
+          const courseData = courseDocSnapshot.data();
+
+          // Lade alle Kapitel und zähle veröffentlichte Lektionen
+          const chaptersSnapshot = await getDocs(
+            collection(db, 'users', ownerId, 'courses', courseId, 'chapters')
+          );
+
+          const publishedChapters = chaptersSnapshot.docs.filter(
+            (doc) => doc.data().status === 'published'
+          );
+
+          if (publishedChapters.length === 0) continue;
+
+          let publishedLessons = 0;
+          for (const chapterDoc of publishedChapters) {
+            const lessonsSnapshot = await getDocs(
+              collection(chapterDoc.ref, 'lessons')
+            );
+            publishedLessons += lessonsSnapshot.docs.filter(
+              (doc) => doc.data().status === 'published' && doc.data().type !== 'subchapter'
+            ).length;
+          }
+
+          if (publishedLessons === 0) continue;
+
+          totalLessons += publishedLessons;
+
+          // Sammle alle IDs der veröffentlichten Lektionen
+          const publishedLessonIds: string[] = [];
+          for (const chapterDoc of publishedChapters) {
+            const lessonsSnapshot = await getDocs(
+              collection(chapterDoc.ref, 'lessons')
+            );
+            lessonsSnapshot.docs.forEach((lessonDoc) => {
+              const lessonData = lessonDoc.data();
+              if (lessonData.status === 'published' && lessonData.type !== 'subchapter') {
+                publishedLessonIds.push(lessonDoc.id);
+              }
+            });
+          }
+
+          // Lade Fortschritt für diesen enrolled Kurs
+          const progressDoc = await getDoc(
+            doc(db, 'users', userId, 'courseProgress', courseId)
+          );
+
+          let progress = 0;
+          if (progressDoc.exists()) {
+            const progressData = progressDoc.data();
+            // Filtere completedLessons: Behalte nur IDs, die in publishedLessonIds existieren
+            const validCompletedLessons = Array.isArray(progressData.completedLessons)
+              ? progressData.completedLessons.filter((id: string) => publishedLessonIds.includes(id))
+              : [];
+            const completedCount = validCompletedLessons.length;
+            
+            if (publishedLessons > 0) {
+              progress = Math.round((completedCount / publishedLessons) * 100);
+            }
+          }
+
+          coursesData.push({
+            id: courseId,
+            title: courseData.title || 'Unbenannter Kurs',
+            description: courseData.description || '',
+            thumbnailUrl: courseData.coverImageUrl,
+            category: courseData.category || 'Allgemein',
+            lessonsCount: publishedLessons,
+            createdBy: courseData.createdBy,
+            progress,
+          });
+        } catch (error) {
+          console.error('Fehler beim Laden des enrolled Kurses:', error);
+        }
       }
 
       setRecentCourses(coursesData);

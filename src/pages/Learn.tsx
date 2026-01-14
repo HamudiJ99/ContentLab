@@ -193,17 +193,42 @@ export default function Learn() {
           doc(db, 'users', currentUser.uid, 'courseProgress', courseId)
         );
 
+        // Erstelle Set mit allen verfügbaren Lektions-IDs
+        const allLessons = loadedChapters.flatMap((ch) => lessonsByChap[ch.id] || []);
+        const availableLessonIds = new Set(allLessons.map(l => l.id));
+
         if (progressDoc.exists()) {
           const progressData = progressDoc.data();
-          setCompletedLessons(new Set(progressData.completedLessons || []));
+          
+          // Filtere completedLessons: Behalte nur IDs, die noch in verfügbaren Lektionen existieren
+          const validCompletedLessons = (progressData.completedLessons || [])
+            .filter((lessonId: string) => availableLessonIds.has(lessonId));
+          
+          setCompletedLessons(new Set(validCompletedLessons));
+          
+          // Wenn sich die completedLessons geändert haben (wegen deaktivierten/gelöschten Lektionen),
+          // aktualisiere das Progress-Dokument
+          if (validCompletedLessons.length !== (progressData.completedLessons || []).length) {
+            await setDoc(
+              doc(db, 'users', currentUser.uid, 'courseProgress', courseId),
+              {
+                completedLessons: validCompletedLessons,
+                totalLessons: allLessons.length,
+                updatedAt: serverTimestamp(),
+              },
+              { merge: true }
+            );
+          }
           
           // Finde letzte nicht abgeschlossene Lektion
-          const allLessons = loadedChapters.flatMap((ch) => lessonsByChap[ch.id] || []);
           const nextLesson = allLessons.find((lesson) => 
-            !progressData.completedLessons?.includes(lesson.id)
+            !validCompletedLessons.includes(lesson.id)
           );
           setCurrentLessonId(nextLesson?.id || allLessons[0]?.id || null);
         } else {
+          // Kein Fortschritt vorhanden - initialisiere mit leerem Set
+          setCompletedLessons(new Set());
+          
           // Starte mit erster Lektion
           const firstChapter = loadedChapters[0];
           if (firstChapter && lessonsByChap[firstChapter.id]?.[0]) {

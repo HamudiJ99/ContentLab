@@ -332,9 +332,93 @@ const Courses = () => {
           })
         );
         
-        const sortedCourses = loadedCourses
+        // Lade auch Kurse, zu denen der Nutzer eingeladen wurde
+        const enrollmentsSnapshot = await getDocs(
+          collection(db, 'users', currentUser.uid, 'enrollments')
+        );
+        
+        const enrolledCoursesRaw = await Promise.all(
+          enrollmentsSnapshot.docs.map(async (enrollmentDoc) => {
+            const enrollmentData = enrollmentDoc.data();
+            const ownerId = enrollmentData.ownerId;
+            const courseId = enrollmentDoc.id;
+            
+            if (!ownerId) return null;
+            
+            try {
+              // Lade den Kurs vom Owner
+              const courseDoc = await getDocs(
+                query(collection(db, 'users', ownerId, 'courses'), )
+              ).then(snapshot => snapshot.docs.find(d => d.id === courseId));
+              
+              if (!courseDoc) return null;
+              
+              const data = courseDoc.data();
+              
+              // Berechne die Gesamtdauer
+              let totalSeconds = 0;
+              const chaptersSnapshot = await getDocs(
+                collection(db, 'users', ownerId, 'courses', courseId, 'chapters')
+              );
+              
+              for (const chapterDoc of chaptersSnapshot.docs) {
+                const lessonsSnapshot = await getDocs(
+                  collection(chapterDoc.ref, 'lessons')
+                );
+                
+                for (const lessonDoc of lessonsSnapshot.docs) {
+                  const lessonData = lessonDoc.data();
+                  if (lessonData.videoDuration && typeof lessonData.videoDuration === 'number' && isFinite(lessonData.videoDuration)) {
+                    totalSeconds += lessonData.videoDuration;
+                  }
+                }
+              }
+              
+              let calculatedDuration = '0:00';
+              if (isFinite(totalSeconds) && totalSeconds > 0) {
+                const hours = Math.floor(totalSeconds / 3600);
+                const minutes = Math.floor((totalSeconds % 3600) / 60);
+                const seconds = Math.floor(totalSeconds % 60);
+                
+                if (hours > 0) {
+                  calculatedDuration = `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+                } else {
+                  calculatedDuration = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+                }
+              }
+              
+              return {
+                id: courseId,
+                title: data.title ?? 'Unbenannter Kurs',
+                description: data.description ?? '',
+                chapters: typeof data.chapters === 'number' ? data.chapters : 0,
+                lessons: typeof data.lessons === 'number' ? data.lessons : 0,
+                duration: data.duration ?? calculatedDuration,
+                categoryIds: Array.isArray(data.categoryIds) ? data.categoryIds : [],
+                coverImageUrl:
+                  typeof data.coverImageUrl === 'string' && data.coverImageUrl.trim().length > 0
+                    ? data.coverImageUrl
+                    : undefined,
+                coverColor:
+                  typeof data.coverColor === 'string' && data.coverColor.trim().length > 0
+                    ? data.coverColor
+                    : undefined,
+                position: Number.MAX_SAFE_INTEGER as number, // Enrolled Kurse am Ende
+              };
+            } catch (error) {
+              console.error('Fehler beim Laden des enrolled Kurses:', error);
+              return null;
+            }
+          })
+        );
+        
+        // Kombiniere eigene und enrolled Kurse, filtere null Werte
+        const enrolledCourses = enrolledCoursesRaw.filter((c): c is NonNullable<typeof c> => c !== null);
+        const allCourses = [...loadedCourses, ...enrolledCourses];
+        
+        const sortedCourses = allCourses
           .sort((a, b) => (a.position ?? Number.MAX_SAFE_INTEGER) - (b.position ?? Number.MAX_SAFE_INTEGER))
-          .map(({ position, ...course }) => course);
+          .map(({ position: _position, ...course }) => course);
         coursesRef.current = sortedCourses;
         setCourses(sortedCourses);
       },
