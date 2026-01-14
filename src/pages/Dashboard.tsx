@@ -26,7 +26,9 @@ import {
   DialogContentText,
   DialogActions,
   useTheme,
+  alpha,
 } from '@mui/material';
+import { darken, lighten, getLuminance } from '@mui/system';
 import Grid from '@mui/material/Grid';
 import SchoolIcon from '@mui/icons-material/School';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
@@ -501,7 +503,30 @@ export default function Dashboard() {
       ) : error ? (
         <Alert severity="error">{error}</Alert>
       ) : courses.length === 0 ? (
-        <Alert severity="info">
+        <Alert 
+          severity="info"
+          sx={{
+            backgroundColor: (theme) => alpha(theme.palette.primary.main, 0.1),
+            color: (theme) => {
+              const lum = getLuminance(theme.palette.primary.main);
+              if (theme.palette.mode === 'dark') {
+                return lum < 0.3 ? lighten(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+              } else {
+                return lum > 0.7 ? darken(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+              }
+            },
+            '& .MuiAlert-icon': {
+              color: (theme) => {
+                const lum = getLuminance(theme.palette.primary.main);
+                if (theme.palette.mode === 'dark') {
+                  return lum < 0.3 ? lighten(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+                } else {
+                  return lum > 0.7 ? darken(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+                }
+              },
+            },
+          }}
+        >
           Noch keine Kurse oder Einladungen sichtbar. Erstelle einen Kurs oder nimm eine Einladung an.
         </Alert>
       ) : (
@@ -552,7 +577,31 @@ export default function Dashboard() {
           </Stack>
 
           {filteredCourses.length === 0 ? (
-            <Alert severity="info" sx={{ mt: 2 }}>
+            <Alert 
+              severity="info" 
+              sx={{ 
+                mt: 2,
+                backgroundColor: (theme) => alpha(theme.palette.primary.main, 0.1),
+                color: (theme) => {
+                  const lum = getLuminance(theme.palette.primary.main);
+                  if (theme.palette.mode === 'dark') {
+                    return lum < 0.3 ? lighten(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+                  } else {
+                    return lum > 0.7 ? darken(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+                  }
+                },
+                '& .MuiAlert-icon': {
+                  color: (theme) => {
+                    const lum = getLuminance(theme.palette.primary.main);
+                    if (theme.palette.mode === 'dark') {
+                      return lum < 0.3 ? lighten(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+                    } else {
+                      return lum > 0.7 ? darken(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+                    }
+                  },
+                },
+              }}
+            >
               {!showHiddenCourses && hiddenCourseCount > 0 && displayedCourses.length === 0
                 ? 'Alle Kurse sind ausgeblendet. Blende sie über den Button oben wieder ein.'
                 : activeTab === 0

@@ -14,6 +14,7 @@ import {
 } from 'firebase/firestore';
 import {
   Alert,
+  alpha,
   Autocomplete,
   Avatar,
   Box,
@@ -50,6 +51,7 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material';
+import { darken, lighten, getLuminance } from '@mui/system';
 import SearchIcon from '@mui/icons-material/Search';
 import FilterListIcon from '@mui/icons-material/FilterList';
 import PersonAddAlt1Icon from '@mui/icons-material/PersonAddAlt1';
@@ -794,7 +796,32 @@ export default function Members() {
               <CircularProgress />
             </Stack>
           ) : filteredMembers.length === 0 ? (
-            <Alert severity="info">Keine Mitglieder vorhanden.</Alert>
+            <Alert 
+              severity="info"
+              sx={{
+                backgroundColor: (theme) => alpha(theme.palette.primary.main, 0.1),
+                color: (theme) => {
+                  const lum = getLuminance(theme.palette.primary.main);
+                  if (theme.palette.mode === 'dark') {
+                    return lum < 0.3 ? lighten(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+                  } else {
+                    return lum > 0.7 ? darken(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+                  }
+                },
+                '& .MuiAlert-icon': {
+                  color: (theme) => {
+                    const lum = getLuminance(theme.palette.primary.main);
+                    if (theme.palette.mode === 'dark') {
+                      return lum < 0.3 ? lighten(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+                    } else {
+                      return lum > 0.7 ? darken(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+                    }
+                  },
+                },
+              }}
+            >
+              Keine Mitglieder vorhanden.
+            </Alert>
           ) : (
             <Table size="small">
               <TableHead>
@@ -879,7 +906,32 @@ export default function Members() {
               <CircularProgress />
             </Stack>
           ) : groups.length === 0 ? (
-            <Alert severity="info">Noch keine Gruppen erstellt.</Alert>
+            <Alert 
+              severity="info"
+              sx={{
+                backgroundColor: (theme) => alpha(theme.palette.primary.main, 0.1),
+                color: (theme) => {
+                  const lum = getLuminance(theme.palette.primary.main);
+                  if (theme.palette.mode === 'dark') {
+                    return lum < 0.3 ? lighten(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+                  } else {
+                    return lum > 0.7 ? darken(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+                  }
+                },
+                '& .MuiAlert-icon': {
+                  color: (theme) => {
+                    const lum = getLuminance(theme.palette.primary.main);
+                    if (theme.palette.mode === 'dark') {
+                      return lum < 0.3 ? lighten(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+                    } else {
+                      return lum > 0.7 ? darken(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+                    }
+                  },
+                },
+              }}
+            >
+              Noch keine Gruppen erstellt.
+            </Alert>
           ) : (
             <Stack spacing={2}>
               {groups.map((group) => {
@@ -1080,7 +1132,32 @@ export default function Members() {
                   <CircularProgress size={24} />
                 </Stack>
               ) : courses.length === 0 ? (
-                <Alert severity="info">Noch keine veröffentlichten Kurse.</Alert>
+                <Alert 
+                  severity="info"
+                  sx={{
+                    backgroundColor: (theme) => alpha(theme.palette.primary.main, 0.1),
+                    color: (theme) => {
+                      const lum = getLuminance(theme.palette.primary.main);
+                      if (theme.palette.mode === 'dark') {
+                        return lum < 0.3 ? lighten(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+                      } else {
+                        return lum > 0.7 ? darken(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+                      }
+                    },
+                    '& .MuiAlert-icon': {
+                      color: (theme) => {
+                        const lum = getLuminance(theme.palette.primary.main);
+                        if (theme.palette.mode === 'dark') {
+                          return lum < 0.3 ? lighten(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+                        } else {
+                          return lum > 0.7 ? darken(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+                        }
+                      },
+                    },
+                  }}
+                >
+                  Noch keine veröffentlichten Kurse.
+                </Alert>
               ) : (
                 <List sx={{ maxHeight: 280, overflow: 'auto' }}>
                   {courses.map((course) => (
@@ -1163,7 +1240,33 @@ export default function Members() {
                 Mitglieder in dieser Gruppe
               </Typography>
               {members.filter((m) => m.groupIds.includes(selectedGroup.id)).length === 0 ? (
-                <Alert severity="info" sx={{ mt: 1 }}>Noch keine Mitglieder zugeordnet.</Alert>
+                <Alert 
+                  severity="info" 
+                  sx={{ 
+                    mt: 1,
+                    backgroundColor: (theme) => alpha(theme.palette.primary.main, 0.1),
+                    color: (theme) => {
+                      const lum = getLuminance(theme.palette.primary.main);
+                      if (theme.palette.mode === 'dark') {
+                        return lum < 0.3 ? lighten(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+                      } else {
+                        return lum > 0.7 ? darken(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+                      }
+                    },
+                    '& .MuiAlert-icon': {
+                      color: (theme) => {
+                        const lum = getLuminance(theme.palette.primary.main);
+                        if (theme.palette.mode === 'dark') {
+                          return lum < 0.3 ? lighten(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+                        } else {
+                          return lum > 0.7 ? darken(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+                        }
+                      },
+                    },
+                  }}
+                >
+                  Noch keine Mitglieder zugeordnet.
+                </Alert>
               ) : (
                 <List sx={{ maxHeight: 200, overflow: 'auto', border: 1, borderColor: 'divider', borderRadius: 1 }}>
                   {members.filter((m) => m.groupIds.includes(selectedGroup.id)).map((member) => (
@@ -1193,7 +1296,32 @@ export default function Members() {
                   <CircularProgress size={24} />
                 </Stack>
               ) : courses.length === 0 ? (
-                <Alert severity="info">Noch keine veröffentlichten Kurse.</Alert>
+                <Alert 
+                  severity="info"
+                  sx={{
+                    backgroundColor: (theme) => alpha(theme.palette.primary.main, 0.1),
+                    color: (theme) => {
+                      const lum = getLuminance(theme.palette.primary.main);
+                      if (theme.palette.mode === 'dark') {
+                        return lum < 0.3 ? lighten(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+                      } else {
+                        return lum > 0.7 ? darken(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+                      }
+                    },
+                    '& .MuiAlert-icon': {
+                      color: (theme) => {
+                        const lum = getLuminance(theme.palette.primary.main);
+                        if (theme.palette.mode === 'dark') {
+                          return lum < 0.3 ? lighten(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+                        } else {
+                          return lum > 0.7 ? darken(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+                        }
+                      },
+                    },
+                  }}
+                >
+                  Noch keine veröffentlichten Kurse.
+                </Alert>
               ) : (
                 <List sx={{ maxHeight: 280, overflow: 'auto' }}>
                   {courses.map((course) => (

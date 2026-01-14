@@ -14,6 +14,7 @@ import {
   IconButton,
   Grid
 } from '@mui/material';
+import { darken, lighten, getLuminance } from '@mui/system';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase/firebaseConfig';
@@ -290,7 +291,7 @@ export default function Home() {
             {
               icon: <TimelineIcon />,
               title: 'Fortschritts-Tracking',
-              description: 'Verfolge den Lernfortschritt deiner Teilnehmer',
+              description: 'Verfolge den Lernfortschrift deiner Teilnehmer',
               gradient: `linear-gradient(135deg, ${theme.palette.info.main}, ${theme.palette.info.dark})`,
             },
             {
@@ -307,7 +308,13 @@ export default function Home() {
                   transition: 'all 0.3s',
                   '&:hover': {
                     transform: 'translateY(-4px)',
-                    boxShadow: theme.shadows[12],
+                    boxShadow: (() => {
+                      const lum = getLuminance(theme.palette.primary.main);
+                      const color = theme.palette.mode === 'dark'
+                        ? (lum < 0.3 ? lighten(theme.palette.primary.main, 0.5) : theme.palette.primary.main)
+                        : (lum > 0.7 ? darken(theme.palette.primary.main, 0.5) : theme.palette.primary.main);
+                      return `0 0 24px ${alpha(color, 0.4)}`;
+                    })(),
                   },
                 }}
               >
@@ -386,7 +393,15 @@ export default function Home() {
         elevation={0}
         sx={{
           background: `linear-gradient(135deg, ${theme.palette.primary.main}, ${lighterColor})`,
-          color: 'white',
+          color: (() => {
+            const lum = getLuminance(theme.palette.primary.main);
+            // Bei sehr hellen Farben (wie weiß) → dunklen Text
+            // Bei sehr dunklen Farben im Dark Mode → hellen Text bleibt
+            if (lum > 0.7) {
+              return theme.palette.mode === 'dark' ? '#000' : '#000';
+            }
+            return 'white';
+          })(),
           p: 4,
           borderRadius: 3,
           mb: 4,
@@ -401,7 +416,15 @@ export default function Home() {
               Deine Lernübersicht für heute
             </Typography>
           </Box>
-          <LocalFireDepartmentIcon sx={{ fontSize: 60, opacity: 0.3 }} />
+          <LocalFireDepartmentIcon 
+            sx={{ 
+              fontSize: 60, 
+              opacity: (() => {
+                const lum = getLuminance(theme.palette.primary.main);
+                return lum > 0.7 ? 0.15 : 0.3;
+              })()
+            }} 
+          />
         </Stack>
       </Paper>
 
@@ -428,14 +451,14 @@ export default function Home() {
           </Card>
         </Grid>
         <Grid size={{ xs: 12, sm: 6 }}>
-          <Card sx={{ height: '100%', background: `linear-gradient(135deg, ${alpha(theme.palette.success.main, 0.1)}, ${alpha(theme.palette.success.main, 0.05)})` }}>
+          <Card sx={{ height: '100%', background: `linear-gradient(135deg, ${alpha('#22c55e', 0.15)}, ${alpha('#22c55e', 0.08)})` }}>
             <CardContent sx={{ p: 2.5, '&:last-child': { pb: 2.5 } }}>
               <Stack spacing={1}>
                 <Stack direction="row" justifyContent="space-between" alignItems="center">
                   <Typography variant="body2" color="text.secondary" fontWeight={600}>
                     ABGESCHLOSSEN
                   </Typography>
-                  <CheckCircleIcon sx={{ fontSize: 20, color: 'success.main' }} />
+                  <CheckCircleIcon sx={{ fontSize: 20, color: '#22c55e' }} />
                 </Stack>
                 <Typography variant="h3" fontWeight={800}>
                   {recentCourses.filter(c => c.progress === 100).length}
@@ -485,7 +508,13 @@ export default function Home() {
                 transition: 'all 0.2s',
                 '&:hover': {
                   transform: 'translateY(-2px)',
-                  boxShadow: theme.shadows[8],
+                  boxShadow: (() => {
+                    const lum = getLuminance(theme.palette.primary.main);
+                    const color = theme.palette.mode === 'dark'
+                      ? (lum < 0.3 ? lighten(theme.palette.primary.main, 0.5) : theme.palette.primary.main)
+                      : (lum > 0.7 ? darken(theme.palette.primary.main, 0.5) : theme.palette.primary.main);
+                    return `0 0 16px ${alpha(color, 0.35)}`;
+                  })(),
                 },
               }}
             >

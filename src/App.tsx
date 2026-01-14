@@ -1,6 +1,6 @@
 
 
-import { BrowserRouter, Routes, Route, Outlet } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Outlet, Navigate } from 'react-router-dom';
 import { Box } from '@mui/material';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
@@ -43,7 +43,8 @@ function App() {
           <Route path="/auth" element={<SignIn />} />
           <Route path="/signin" element={<SignIn />} />
           <Route element={<AppLayout />}>
-            <Route path="/" element={<Home />} />
+            <Route path="/" element={<Navigate to="/home" replace />} />
+            <Route path="/home" element={<Home />} />
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/courses" element={<Courses />} />
             <Route path="/courses/:courseId" element={<CourseEditor />} />

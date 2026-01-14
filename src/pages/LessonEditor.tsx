@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, useCallback, useRef, type ChangeEvent } f
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   Alert,
+  alpha,
   Box,
   Breadcrumbs,
   Button,
@@ -21,6 +22,7 @@ import {
   Typography,
   useTheme,
 } from '@mui/material';
+import { darken, lighten, getLuminance } from '@mui/system';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
@@ -628,7 +630,32 @@ const LessonEditor = () => {
   if (!currentUser) {
     return (
       <Box sx={{ p: 4 }}>
-        <Alert severity="info">Bitte melde dich an, um Lektionen zu bearbeiten.</Alert>
+        <Alert 
+          severity="info"
+          sx={{
+            backgroundColor: (theme) => alpha(theme.palette.primary.main, 0.1),
+            color: (theme) => {
+              const lum = getLuminance(theme.palette.primary.main);
+              if (theme.palette.mode === 'dark') {
+                return lum < 0.3 ? lighten(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+              } else {
+                return lum > 0.7 ? darken(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+              }
+            },
+            '& .MuiAlert-icon': {
+              color: (theme) => {
+                const lum = getLuminance(theme.palette.primary.main);
+                if (theme.palette.mode === 'dark') {
+                  return lum < 0.3 ? lighten(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+                } else {
+                  return lum > 0.7 ? darken(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+                }
+              },
+            },
+          }}
+        >
+          Bitte melde dich an, um Lektionen zu bearbeiten.
+        </Alert>
       </Box>
     );
   }
@@ -718,7 +745,30 @@ const LessonEditor = () => {
           Diese Lektion wurde nicht gefunden oder wurde gelöscht.
         </Alert>
       ) : !isEditableLesson ? (
-        <Alert severity="info">
+        <Alert 
+          severity="info"
+          sx={{
+            backgroundColor: (theme) => alpha(theme.palette.primary.main, 0.1),
+            color: (theme) => {
+              const lum = getLuminance(theme.palette.primary.main);
+              if (theme.palette.mode === 'dark') {
+                return lum < 0.3 ? lighten(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+              } else {
+                return lum > 0.7 ? darken(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+              }
+            },
+            '& .MuiAlert-icon': {
+              color: (theme) => {
+                const lum = getLuminance(theme.palette.primary.main);
+                if (theme.palette.mode === 'dark') {
+                  return lum < 0.3 ? lighten(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+                } else {
+                  return lum > 0.7 ? darken(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+                }
+              },
+            },
+          }}
+        >
           Dieser Lektionstyp wird aktuell nicht unterstützt.
         </Alert>
       ) : (

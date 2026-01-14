@@ -18,6 +18,7 @@ import {
   Chip,
   CircularProgress,
   Alert,
+  alpha,
   Breadcrumbs,
   Link,
   Paper,
@@ -25,6 +26,7 @@ import {
   IconButton,
   Tooltip,
 } from '@mui/material';
+import { darken, lighten, getLuminance } from '@mui/system';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import PlayCircleOutlineIcon from '@mui/icons-material/PlayCircleOutline';
 import ArticleOutlinedIcon from '@mui/icons-material/ArticleOutlined';
@@ -351,7 +353,32 @@ export default function Learn() {
   if (!currentUser) {
     return (
       <Box sx={{ p: 4, maxWidth: 1160, mx: 'auto' }}>
-        <Alert severity="info">Bitte melde dich an, um diesen Kurs zu sehen.</Alert>
+        <Alert 
+          severity="info"
+          sx={{
+            backgroundColor: (theme) => alpha(theme.palette.primary.main, 0.1),
+            color: (theme) => {
+              const lum = getLuminance(theme.palette.primary.main);
+              if (theme.palette.mode === 'dark') {
+                return lum < 0.3 ? lighten(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+              } else {
+                return lum > 0.7 ? darken(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+              }
+            },
+            '& .MuiAlert-icon': {
+              color: (theme) => {
+                const lum = getLuminance(theme.palette.primary.main);
+                if (theme.palette.mode === 'dark') {
+                  return lum < 0.3 ? lighten(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+                } else {
+                  return lum > 0.7 ? darken(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+                }
+              },
+            },
+          }}
+        >
+          Bitte melde dich an, um diesen Kurs zu sehen.
+        </Alert>
       </Box>
     );
   }
@@ -633,7 +660,30 @@ export default function Learn() {
                     )}
                   </Box>
                 ) : (
-                  <Alert severity="info">
+                  <Alert 
+                    severity="info"
+                    sx={{
+                      backgroundColor: (theme) => alpha(theme.palette.primary.main, 0.1),
+                      color: (theme) => {
+                        const lum = getLuminance(theme.palette.primary.main);
+                        if (theme.palette.mode === 'dark') {
+                          return lum < 0.3 ? lighten(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+                        } else {
+                          return lum > 0.7 ? darken(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+                        }
+                      },
+                      '& .MuiAlert-icon': {
+                        color: (theme) => {
+                          const lum = getLuminance(theme.palette.primary.main);
+                          if (theme.palette.mode === 'dark') {
+                            return lum < 0.3 ? lighten(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+                          } else {
+                            return lum > 0.7 ? darken(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+                          }
+                        },
+                      },
+                    }}
+                  >
                     Dieser Lektionstyp wird noch nicht unterstützt.
                   </Alert>
                 )}
@@ -678,7 +728,32 @@ export default function Learn() {
               </CardContent>
             </Card>
           ) : (
-            <Alert severity="info">Wähle eine Lektion aus, um zu beginnen.</Alert>
+            <Alert 
+              severity="info"
+              sx={{
+                backgroundColor: (theme) => alpha(theme.palette.primary.main, 0.1),
+                color: (theme) => {
+                  const lum = getLuminance(theme.palette.primary.main);
+                  if (theme.palette.mode === 'dark') {
+                    return lum < 0.3 ? lighten(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+                  } else {
+                    return lum > 0.7 ? darken(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+                  }
+                },
+                '& .MuiAlert-icon': {
+                  color: (theme) => {
+                    const lum = getLuminance(theme.palette.primary.main);
+                    if (theme.palette.mode === 'dark') {
+                      return lum < 0.3 ? lighten(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+                    } else {
+                      return lum > 0.7 ? darken(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+                    }
+                  },
+                },
+              }}
+            >
+              Wähle eine Lektion aus, um zu beginnen.
+            </Alert>
           )}
         </Box>
 

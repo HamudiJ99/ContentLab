@@ -158,6 +158,7 @@ type Course = {
   categoryIds: string[];
   coverImageUrl?: string;
   coverColor?: string;
+  position?: number;
 };
 
 type CategoryFormState = {
@@ -259,17 +260,58 @@ const Courses = () => {
     const coursesQuery = query(collection(db, 'users', currentUser.uid, 'courses'));
     const unsubscribeCourses = onSnapshot(
       coursesQuery,
-      (snapshot) => {
-        const loadedCourses: Course[] = snapshot.docs
-          .map((docSnapshot) => {
+      async (snapshot) => {
+        const loadedCourses: Course[] = await Promise.all(
+          snapshot.docs.map(async (docSnapshot) => {
             const data = docSnapshot.data();
+            
+            // Berechne die Gesamtdauer aller Videos im Kurs
+            let totalSeconds = 0;
+            const chaptersSnapshot = await getDocs(
+              collection(db, 'users', currentUser.uid, 'courses', docSnapshot.id, 'chapters')
+            );
+            
+            for (const chapterDoc of chaptersSnapshot.docs) {
+              const lessonsSnapshot = await getDocs(
+                collection(chapterDoc.ref, 'lessons')
+              );
+              
+              for (const lessonDoc of lessonsSnapshot.docs) {
+                const lessonData = lessonDoc.data();
+                if (lessonData.videoDuration && typeof lessonData.videoDuration === 'number') {
+                  totalSeconds += lessonData.videoDuration;
+                }
+              }
+            }
+            
+            // Konvertiere Sekunden zu MM:SS oder HH:MM:SS Format
+            const hours = Math.floor(totalSeconds / 3600);
+            const minutes = Math.floor((totalSeconds % 3600) / 60);
+            const seconds = Math.floor(totalSeconds % 60);
+            
+            let calculatedDuration = '0:00';
+            if (hours > 0) {
+              calculatedDuration = `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+            } else {
+              calculatedDuration = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+            }
+            
+            // Update Firestore if duration changed
+            if (calculatedDuration !== data.duration) {
+              await setDoc(
+                doc(db, 'users', currentUser.uid, 'courses', docSnapshot.id),
+                { duration: calculatedDuration },
+                { merge: true }
+              );
+            }
+            
             return {
               id: docSnapshot.id,
               title: data.title ?? 'Unbenannter Kurs',
               description: data.description ?? '',
               chapters: typeof data.chapters === 'number' ? data.chapters : 0,
               lessons: typeof data.lessons === 'number' ? data.lessons : 0,
-              duration: typeof data.duration === 'string' ? data.duration : '0:00',
+              duration: calculatedDuration,
               categoryIds: Array.isArray(data.categoryIds) ? data.categoryIds : [],
               coverImageUrl:
                 typeof data.coverImageUrl === 'string' && data.coverImageUrl.trim().length > 0
@@ -282,10 +324,13 @@ const Courses = () => {
               position: typeof data.position === 'number' ? data.position : Number.MAX_SAFE_INTEGER,
             };
           })
-          .sort((a, b) => a.position - b.position)
+        );
+        
+        const sortedCourses = loadedCourses
+          .sort((a, b) => (a.position ?? Number.MAX_SAFE_INTEGER) - (b.position ?? Number.MAX_SAFE_INTEGER))
           .map(({ position, ...course }) => course);
-        coursesRef.current = loadedCourses;
-        setCourses(loadedCourses);
+        coursesRef.current = sortedCourses;
+        setCourses(sortedCourses);
       },
       (error) => {
         console.error('Kurse konnten nicht geladen werden', error);

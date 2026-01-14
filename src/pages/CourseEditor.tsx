@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, ty
 import { Link as RouterLink, useNavigate, useParams } from 'react-router-dom';
 import {
   Alert,
+  alpha,
   Avatar,
   Box,
   Breadcrumbs,
@@ -35,6 +36,7 @@ import {
   useTheme,
 } from '@mui/material';
 import type { SelectChangeEvent } from '@mui/material/Select';
+import { darken, lighten, getLuminance } from '@mui/system';
 import AddIcon from '@mui/icons-material/Add';
 import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined';
 import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
@@ -1329,7 +1331,32 @@ const CourseEditor = () => {
   if (!currentUser) {
     return (
       <Box sx={{ p: 4 }}>
-        <Alert severity="info">Bitte melde dich an, um Kurse zu bearbeiten.</Alert>
+        <Alert 
+          severity="info"
+          sx={{
+            backgroundColor: (theme) => alpha(theme.palette.primary.main, 0.1),
+            color: (theme) => {
+              const lum = getLuminance(theme.palette.primary.main);
+              if (theme.palette.mode === 'dark') {
+                return lum < 0.3 ? lighten(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+              } else {
+                return lum > 0.7 ? darken(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+              }
+            },
+            '& .MuiAlert-icon': {
+              color: (theme) => {
+                const lum = getLuminance(theme.palette.primary.main);
+                if (theme.palette.mode === 'dark') {
+                  return lum < 0.3 ? lighten(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+                } else {
+                  return lum > 0.7 ? darken(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
+                }
+              },
+            },
+          }}
+        >
+          Bitte melde dich an, um Kurse zu bearbeiten.
+        </Alert>
       </Box>
     );
   }
