@@ -995,7 +995,6 @@ const CourseEditor = () => {
       
       for (const lessonId of selectedLessons) {
         // Finde die Lektion in allen Kapiteln
-        let found = false;
         for (const chapter of chapters) {
           const lessons = lessonsByChapter[chapter.id] ?? [];
           const lesson = lessons.find(l => l.id === lessonId);
@@ -1007,7 +1006,6 @@ const CourseEditor = () => {
             if (lesson.type !== 'subchapter') {
               regularLessonsCount++;
             }
-            found = true;
             break;
           }
         }
