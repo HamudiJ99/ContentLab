@@ -14,7 +14,7 @@ import {
   IconButton,
   Grid
 } from '@mui/material';
-import { darken, lighten, getLuminance } from '@mui/system';
+import { getLuminance } from '@mui/system';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase/firebaseConfig';

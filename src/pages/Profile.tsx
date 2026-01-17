@@ -786,7 +786,7 @@ export default function Profile() {
             }}
           >
             <Cropper
-              image={logoCropImageSrc}
+              image={logoCropImageSrc ?? undefined}
               crop={logoCrop}
               zoom={logoZoom}
               aspect={1}

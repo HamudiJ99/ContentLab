@@ -865,7 +865,7 @@ const CourseEditor = () => {
       improved = improved.replace(/^\w/, (c) => c.toUpperCase());
       
       // Sicherstellen, dass Sätze mit Großbuchstaben beginnen
-      improved = improved.replace(/([.!?]\s+)(\w)/g, (match, p1, p2) => p1 + p2.toUpperCase());
+      improved = improved.replace(/([.!?]\s+)(\w)/g, (p1, p2) => p1 + p2.toUpperCase());
       
       // Leerzeichen vor Punkten entfernen
       improved = improved.replace(/\s+([.,!?;:])/g, '$1');
@@ -1825,7 +1825,7 @@ const CourseEditor = () => {
               InputProps={{
                 endAdornment: (
                   <InputAdornment position="end" sx={{ alignItems: 'flex-start', mt: 1 }}>
-                    <Tooltip title="Text verbessern (Beta)" arrow>
+                    <Tooltip title="Text mit KI verbessern" arrow>
                       <span>
                         <IconButton
                           onClick={handleImproveDescription}
