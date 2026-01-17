@@ -20,6 +20,7 @@ import {
   FormControl,
   FormControlLabel,
   IconButton,
+  InputAdornment,
   InputLabel,
   Link,
   Menu,
@@ -38,6 +39,7 @@ import {
 import type { SelectChangeEvent } from '@mui/material/Select';
 import { darken, lighten, getLuminance } from '@mui/system';
 import AddIcon from '@mui/icons-material/Add';
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined';
 import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
@@ -333,6 +335,9 @@ const CourseEditor = () => {
   const [cropPreset, setCropPreset] = useState<CropPreset>('square');
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedLessons, setSelectedLessons] = useState<Set<string>>(new Set());
+  const [deleteConfirmDialog, setDeleteConfirmDialog] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [improvingDescription, setImprovingDescription] = useState(false);
   const cropAspect = useMemo(() => {
     const preset = cropAspectPresets.find((option) => option.value === cropPreset);
     return preset?.aspect;
@@ -716,6 +721,171 @@ const CourseEditor = () => {
     }
   };
 
+  const handleCourseCoverDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+  };
+
+  const handleCourseCoverDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    
+    const file = event.dataTransfer.files?.[0];
+    if (file && file.type.startsWith('image/')) {
+      openCropDialogForFile(file);
+    }
+  };
+
+  const handleImproveDescription = () => {
+    if (!courseForm.description.trim() || improvingDescription) {
+      return;
+    }
+    
+    setImprovingDescription(true);
+    
+    // Simuliere AI-Verbesserung (In Produktion: OpenAI API Call)
+    setTimeout(() => {
+      let improved = courseForm.description.trim();
+      
+      // Häufige Rechtschreibfehler korrigieren
+      const corrections: Record<string, string> = {
+        'buchhaltung': 'Buchhaltung',
+        'fima': 'Firma',
+        'fimra': 'Firma',
+        'firme': 'Firma',
+        'erklärt': 'erklärt',
+        'erklert': 'erklärt',
+        'villeicht': 'vielleicht',
+        'vieleicht': 'vielleicht',
+        'standart': 'Standard',
+        'standaard': 'Standard',
+        'z.b.': 'z. B.',
+        'bzw.': 'bzw.',
+        'usw.': 'usw.',
+        ' und ': ' und ',
+        ' oder ': ' oder ',
+        ' bzw ': ' bzw. ',
+      };
+      
+      // Wende Korrekturen an (case-insensitive für Wortanfang)
+      Object.entries(corrections).forEach(([wrong, correct]) => {
+        const regex = new RegExp(`\\b${wrong}\\b`, 'gi');
+        improved = improved.replace(regex, correct);
+      });
+      
+      // Häufige deutsche Nomen (Basis-Liste)
+      const commonNouns = [
+        'kurs', 'kurse', 'video', 'videos', 'lektion', 'lektionen', 'kapitel',
+        'beispiel', 'beispiele', 'grundlagen', 'anfänger', 'fortgeschrittene',
+        'thema', 'themen', 'inhalt', 'inhalte', 'lernen', 'wissen', 'praxis',
+        'theorie', 'übung', 'übungen', 'projekt', 'projekte', 'aufgabe', 'aufgaben',
+        'schritt', 'schritte', 'einführung', 'grundlage', 'teil', 'teile',
+        'modul', 'module', 'anleitung', 'anleitungen', 'methode', 'methoden',
+        'technik', 'techniken', 'strategie', 'strategien', 'tipps', 'tipp',
+        'trick', 'tricks', 'werkzeug', 'werkzeuge', 'tool', 'tools',
+        'software', 'programm', 'programme', 'anwendung', 'anwendungen',
+        'funktion', 'funktionen', 'feature', 'features', 'bereich', 'bereiche',
+        'aspekt', 'aspekte', 'vorteil', 'vorteile', 'nutzen', 'ziel', 'ziele',
+        'erfolg', 'karriere', 'job', 'jobs', 'beruf', 'berufe', 'business',
+        'unternehmen', 'firma', 'firmen', 'kunde', 'kunden', 'markt', 'märkte',
+        'produkt', 'produkte', 'service', 'dienstleistung', 'dienstleistungen',
+        'marketing', 'verkauf', 'vertrieb', 'finanzen', 'buchhaltung',
+        'personal', 'team', 'teams', 'mitarbeiter', 'chef', 'manager',
+        'design', 'grafik', 'layout', 'farbe', 'farben', 'schrift', 'schriften',
+        'bild', 'bilder', 'foto', 'fotos', 'animation', 'animationen',
+        'musik', 'sound', 'ton', 'audio', 'podcast', 'podcasts',
+        'text', 'texte', 'artikel', 'blog', 'beiträge', 'beitrag',
+        'website', 'webseite', 'seite', 'seiten', 'internet', 'web',
+        'app', 'apps', 'mobile', 'desktop', 'cloud', 'datenbank', 'daten',
+        'code', 'programmierung', 'entwicklung', 'javascript', 'python',
+        'projekt', 'portfolio', 'lösung', 'lösungen', 'problem', 'probleme',
+        'fehler', 'bug', 'bugs', 'test', 'tests', 'qualität', 'standard',
+        'version', 'versionen', 'update', 'updates', 'release', 'feature',
+        'system', 'systeme', 'prozess', 'prozesse', 'workflow', 'ablauf',
+        'konzept', 'konzepte', 'idee', 'ideen', 'plan', 'pläne', 'vision',
+        'start', 'beginn', 'ende', 'abschluss', 'ergebnis', 'ergebnisse',
+        'wert', 'werte', 'qualität', 'quantität', 'niveau', 'level',
+        'minute', 'minuten', 'stunde', 'stunden', 'tag', 'tage', 'woche',
+        'monat', 'monate', 'jahr', 'jahre', 'zeit', 'zeiten', 'tempo',
+        'schnelligkeit', 'geschwindigkeit', 'effizienz', 'effektivität',
+      ];
+      
+      // Nomen-Endungen (typische deutsche Substantiv-Suffixe)
+      const nounSuffixes = [
+        'ung', 'heit', 'keit', 'schaft', 'tum', 'nis', 'sal', 'sel',
+        'chen', 'lein', 'ling', 'tion', 'tät', 'anz', 'enz', 'ik',
+        'ur', 'ismus', 'ment', 'age', 'eur', 'teur', 'ant', 'ent',
+        'ist', 'or', 'ar', 'är', 'eur', 'ier'
+      ];
+      
+      // Artikel für Nomen-Erkennung
+      const articles = ['der', 'die', 'das', 'ein', 'eine', 'eines', 'einem', 'einen'];
+      
+      // Wörter in Array aufteilen
+      const words = improved.split(/\b/);
+      
+      // Jeden Wort durchgehen
+      for (let i = 0; i < words.length; i++) {
+        const word = words[i].toLowerCase();
+        const isFirstWord = i === 0 || /[.!?]\s*$/.test(words[i - 1]);
+        
+        // Überspringe, wenn schon großgeschrieben oder kein Buchstabenwort
+        if (!/^[a-zäöüß]+$/.test(word)) continue;
+        if (words[i][0] === words[i][0].toUpperCase()) continue;
+        
+        // Check 1: Ist in der Nomen-Liste?
+        if (commonNouns.includes(word)) {
+          words[i] = words[i][0].toUpperCase() + words[i].slice(1);
+          continue;
+        }
+        
+        // Check 2: Hat Nomen-Endung?
+        const hasNounSuffix = nounSuffixes.some(suffix => word.endsWith(suffix));
+        if (hasNounSuffix && !isFirstWord) {
+          words[i] = words[i][0].toUpperCase() + words[i].slice(1);
+          continue;
+        }
+        
+        // Check 3: Steht nach Artikel?
+        if (i >= 2) {
+          const prevWord = words[i - 2].toLowerCase();
+          if (articles.includes(prevWord)) {
+            words[i] = words[i][0].toUpperCase() + words[i].slice(1);
+            continue;
+          }
+        }
+      }
+      
+      improved = words.join('');
+      
+      // Doppelte Leerzeichen entfernen
+      improved = improved.replace(/\s+/g, ' ');
+      
+      // Erster Buchstabe groß
+      improved = improved.replace(/^\w/, (c) => c.toUpperCase());
+      
+      // Sicherstellen, dass Sätze mit Großbuchstaben beginnen
+      improved = improved.replace(/([.!?]\s+)(\w)/g, (match, p1, p2) => p1 + p2.toUpperCase());
+      
+      // Leerzeichen vor Punkten entfernen
+      improved = improved.replace(/\s+([.,!?;:])/g, '$1');
+      
+      // Leerzeichen nach Punkten sicherstellen
+      improved = improved.replace(/([.!?])(\w)/g, '$1 $2');
+      
+      // Punkt am Ende hinzufügen, wenn nicht vorhanden
+      if (!/[.!?]$/.test(improved)) {
+        improved += '.';
+      }
+      
+      // Komma vor "und" und "oder" entfernen (häufiger Fehler)
+      improved = improved.replace(/,\s+(und|oder)\s+/g, ' $1 ');
+      
+      setCourseForm((prev) => ({ ...prev, description: improved }));
+      setImprovingDescription(false);
+    }, 800);
+  };
+
   const uploadCoverImage = async (file: File, path: string) => {
     const storageRef = ref(storage, path);
     await uploadBytes(storageRef, file);
@@ -984,8 +1154,12 @@ const CourseEditor = () => {
       return;
     }
     
-    const count = selectedLessons.size;
-    if (!window.confirm(`${count} Lektion${count === 1 ? '' : 'en'} wirklich löschen?`)) {
+    // Öffne Bestätigungsdialog
+    setDeleteConfirmDialog(true);
+  };
+  
+  const handleConfirmDelete = async () => {
+    if (!courseRef || selectedLessons.size === 0 || deleteConfirmText !== 'Löschen') {
       return;
     }
     
@@ -1021,6 +1195,8 @@ const CourseEditor = () => {
       // Auswahl zurücksetzen
       setSelectedLessons(new Set());
       setSelectionMode(false);
+      setDeleteConfirmDialog(false);
+      setDeleteConfirmText('');
       
       void refreshCourseAggregates();
     } catch (error) {
@@ -1646,6 +1822,33 @@ const CourseEditor = () => {
               fullWidth
               multiline
               minRows={3}
+              InputProps={{
+                endAdornment: (
+                  <InputAdornment position="end" sx={{ alignItems: 'flex-start', mt: 1 }}>
+                    <Tooltip title="Text verbessern (Beta)" arrow>
+                      <span>
+                        <IconButton
+                          onClick={handleImproveDescription}
+                          disabled={!courseForm.description.trim() || improvingDescription}
+                          size="small"
+                          sx={{
+                            color: 'primary.main',
+                            '&:hover': {
+                              backgroundColor: 'action.hover',
+                            },
+                          }}
+                        >
+                          {improvingDescription ? (
+                            <CircularProgress size={20} />
+                          ) : (
+                            <AutoAwesomeIcon fontSize="small" />
+                          )}
+                        </IconButton>
+                      </span>
+                    </Tooltip>
+                  </InputAdornment>
+                ),
+              }}
             />
             <FormControl fullWidth>
               <InputLabel id={categoryLabelId} shrink>
@@ -1716,6 +1919,8 @@ const CourseEditor = () => {
                         
                       </Typography>
                       <Box
+                        onDragOver={handleCourseCoverDragOver}
+                        onDrop={handleCourseCoverDrop}
                         sx={{
                           width: '100%',
                           height: 140,
@@ -1724,9 +1929,15 @@ const CourseEditor = () => {
                           overflow: 'hidden',
                           background: courseCoverFile || courseForm.coverImageUrl
                             ? 'action.hover'
-                            : courseForm.coverColor || 'linear-gradient(135deg, #a855f7, #6366f1)',
-                          border: courseForm.coverColor ? `1px solid ${courseForm.coverColor}` : `1px dashed`,
-                          borderColor: courseForm.coverColor || (courseCoverFile || courseForm.coverImageUrl ? 'transparent' : 'divider'),
+                            : courseForm.coverColor === '' ? primaryColor : (courseForm.coverColor || primaryColor),
+                          border: (courseForm.coverColor !== undefined && courseForm.coverColor !== null) ? `1px solid ${courseForm.coverColor === '' ? primaryColor : courseForm.coverColor}` : `1px dashed`,
+                          borderColor: (courseForm.coverColor !== undefined && courseForm.coverColor !== null) ? (courseForm.coverColor === '' ? primaryColor : courseForm.coverColor) : (courseCoverFile || courseForm.coverImageUrl ? 'transparent' : 'divider'),
+                          cursor: 'pointer',
+                          transition: 'all 0.2s ease',
+                          '&:hover': {
+                            opacity: 0.8,
+                            borderColor: 'primary.main',
+                          },
                         }}
                       >
                         {courseCoverFile ? (
@@ -1735,7 +1946,7 @@ const CourseEditor = () => {
                           <Box component="img" src={courseForm.coverImageUrl} alt="Cover Vorschau" sx={{ width: '100%', height: '100%', objectFit: 'contain', backgroundColor: 'background.default' }} />
                         ) : (
                           <Stack alignItems="center" justifyContent="center" sx={{ height: '100%' }}>
-                            <CollectionsIcon sx={{ color: courseForm.coverColor ? 'rgba(255,255,255,0.9)' : 'text.disabled' }} />
+                            <CollectionsIcon sx={{ color: (courseForm.coverColor !== undefined && courseForm.coverColor !== null) ? 'rgba(255,255,255,0.9)' : 'text.disabled' }} />
                           </Stack>
                         )}
                       </Box>
@@ -2185,6 +2396,51 @@ const CourseEditor = () => {
           Löschen
         </MenuItem>
       </Menu>
+
+      <Dialog
+        open={deleteConfirmDialog}
+        onClose={() => {
+          setDeleteConfirmDialog(false);
+          setDeleteConfirmText('');
+        }}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Lektionen löschen</DialogTitle>
+        <DialogContent>
+          <Typography variant="body1" sx={{ mb: 2 }}>
+            Du bist dabei, {selectedLessons.size} Lektion{selectedLessons.size === 1 ? '' : 'en'} zu löschen. Diese Aktion kann nicht rückgängig gemacht werden.
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Bitte gib <strong>Löschen</strong> ein, um zu bestätigen:
+          </Typography>
+          <TextField
+            fullWidth
+            value={deleteConfirmText}
+            onChange={(e) => setDeleteConfirmText(e.target.value)}
+            placeholder="Löschen"
+            autoFocus
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button
+            onClick={() => {
+              setDeleteConfirmDialog(false);
+              setDeleteConfirmText('');
+            }}
+          >
+            Abbrechen
+          </Button>
+          <Button
+            variant="contained"
+            color="error"
+            onClick={handleConfirmDelete}
+            disabled={deleteConfirmText !== 'Löschen'}
+          >
+            Löschen
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };

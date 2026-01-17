@@ -1,7 +1,10 @@
 import { Drawer, List, ListItemButton, ListItemIcon, ListItemText, Box, Typography, Divider, ButtonBase, IconButton, Tooltip, alpha } from '@mui/material';
 import { darken, lighten, getLuminance } from '@mui/system';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { onAuthStateChanged, type User } from 'firebase/auth';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { auth, db } from '../firebase/firebaseConfig';
 import HomeOutlinedIcon from '@mui/icons-material/HomeOutlined';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import SchoolIcon from '@mui/icons-material/School';
@@ -25,8 +28,43 @@ export default function Sidebar() {
   const location = useLocation();
   const { confirmNavigation } = useNavigation();
   const [collapsed, setCollapsed] = useState(false);
+  const [authUser, setAuthUser] = useState<User | null>(auth.currentUser);
+  const [logoUrl, setLogoUrl] = useState<string>('');
+  const [logoVersion, setLogoVersion] = useState<number | null>(null);
 
   const drawerWidth = collapsed ? drawerWidthCollapsed : drawerWidthExpanded;
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setAuthUser(user);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!authUser) {
+      setLogoUrl('');
+      setLogoVersion(null);
+      return;
+    }
+
+    const unsubscribe = onSnapshot(doc(db, 'users', authUser.uid), (snapshot) => {
+      const data = snapshot.data();
+      setLogoUrl(data?.logoUrl ?? '');
+      setLogoVersion(typeof data?.logoVersion === 'number' ? data.logoVersion : null);
+    });
+
+    return () => unsubscribe();
+  }, [authUser]);
+
+  const buildLogoSrc = (url?: string, version?: number | null) => {
+    if (!url) return '';
+    if (!version) return url;
+    const separator = url.includes('?') ? '&' : '?';
+    return `${url}${separator}v=${version}`;
+  };
+
+  const logoSrc = buildLogoSrc(logoUrl, logoVersion);
 
   const handleNavigate = async (path: string) => {
     const canNavigate = await confirmNavigation(path);
@@ -63,8 +101,8 @@ export default function Sidebar() {
               onClick={() => handleNavigate('/home')}
               sx={{
                 display: 'inline-flex',
-                alignItems: 'baseline',
-                gap: 0.5,
+                alignItems: 'center',
+                gap: 1.5,
                 borderRadius: 2,
                 px: 1,
                 py: 0.5,
@@ -73,6 +111,19 @@ export default function Sidebar() {
                 },
               }}
             >
+              {logoSrc && (
+                <Box
+                  component="img"
+                  src={logoSrc}
+                  alt="Logo"
+                  sx={{
+                    height: 48,
+                    maxWidth: 48,
+                    objectFit: 'contain',
+                    p: 0.5,
+                  }}
+                />
+              )}
               <Typography variant="h5" fontWeight={800} letterSpacing={0.6}>
                 Content
                 <Box component="span" sx={{ fontWeight: 400 }}>Lab</Box>
@@ -132,6 +183,10 @@ export default function Sidebar() {
                           return lum > 0.7 ? darken(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
                         }
                       })(),
+                      '& .MuiListItemIcon-root': {
+                        backgroundColor: alpha(theme.palette.primary.main, 0.5),
+                        color: '#fff',
+                      },
                     },
                   })}
                 >

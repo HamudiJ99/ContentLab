@@ -13,7 +13,7 @@ import {
   Typography,
   useTheme,
 } from '@mui/material';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, updateProfile } from 'firebase/auth';
 import { FirebaseError } from 'firebase/app';
 import { auth } from '../firebase/firebaseConfig';
 import Footer from '../components/Footer';
@@ -26,6 +26,7 @@ const errorMessages: Record<string, string> = {
   'auth/wrong-password': 'Falsches Passwort.',
   'auth/email-already-in-use': 'Diese E-Mail wird bereits verwendet.',
   'auth/weak-password': 'Passwort muss mindestens 6 Zeichen lang sein.',
+  'auth/invalid-email': 'Ungültige E-Mail-Adresse.',
 };
 
 function translateError(error: unknown): string {
@@ -39,6 +40,8 @@ export default function SignIn() {
   const [mode, setMode] = useState<AuthMode>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [displayName, setDisplayName] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
@@ -49,13 +52,35 @@ export default function SignIn() {
     setError('');
     setInfo('');
 
+    // Validierung für Registrierung
+    if (mode === 'register') {
+      if (!displayName.trim()) {
+        setError('Bitte gib einen Anzeigenamen ein.');
+        return;
+      }
+      if (password !== confirmPassword) {
+        setError('Die Passwörter stimmen nicht überein.');
+        return;
+      }
+      if (password.length < 6) {
+        setError('Passwort muss mindestens 6 Zeichen lang sein.');
+        return;
+      }
+    }
+
     setLoading(true);
     try {
       if (mode === 'login') {
         await signInWithEmailAndPassword(auth, email.trim(), password);
         navigate('/');
       } else {
-        await createUserWithEmailAndPassword(auth, email.trim(), password);
+        const userCredential = await createUserWithEmailAndPassword(auth, email.trim(), password);
+        
+        // Setze den Anzeigenamen
+        await updateProfile(userCredential.user, {
+          displayName: displayName.trim(),
+        });
+        
         setInfo('Konto erstellt! Du bist jetzt angemeldet.');
         navigate('/');
       }
@@ -112,7 +137,7 @@ export default function SignIn() {
               : '0 25px 60px rgba(15, 23, 42, 0.15)',
         }}
       >
-        <Box mb={3}>
+        <Box mb={3} textAlign="center">
           <Typography variant="h4" fontWeight={700} gutterBottom>
             ContentLab
           </Typography>
@@ -140,6 +165,19 @@ export default function SignIn() {
         </Tabs>
 
         <Box component="form" onSubmit={handleSubmit} noValidate>
+          {mode === 'register' && (
+            <TextField
+              label="Anzeigename"
+              type="text"
+              value={displayName}
+              onChange={(event) => setDisplayName(event.target.value)}
+              fullWidth
+              margin="normal"
+              autoComplete="name"
+              placeholder="Dein Name im Profil"
+            />
+          )}
+          
           <TextField
             label="E-Mail"
             type="email"
@@ -149,6 +187,7 @@ export default function SignIn() {
             margin="normal"
             autoComplete="email"
           />
+          
           <TextField
             label="Passwort"
             type="password"
@@ -158,6 +197,24 @@ export default function SignIn() {
             margin="normal"
             autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
           />
+          
+          {mode === 'register' && (
+            <TextField
+              label="Passwort bestätigen"
+              type="password"
+              value={confirmPassword}
+              onChange={(event) => setConfirmPassword(event.target.value)}
+              fullWidth
+              margin="normal"
+              autoComplete="new-password"
+              error={confirmPassword.length > 0 && password !== confirmPassword}
+              helperText={
+                confirmPassword.length > 0 && password !== confirmPassword
+                  ? 'Passwörter stimmen nicht überein'
+                  : ''
+              }
+            />
+          )}
 
           {error && (
             <Alert severity="error" sx={{ mt: 2 }}>

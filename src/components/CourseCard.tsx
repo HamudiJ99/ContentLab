@@ -7,6 +7,7 @@ import {
   Menu,
   MenuItem,
   Stack,
+  useTheme,
 } from '@mui/material';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import ImageIcon from '@mui/icons-material/Image';
@@ -39,6 +40,7 @@ export default function CourseCard({
   onDelete,
   onOpen,
 }: CourseCardProps) {
+  const theme = useTheme();
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const menuOpen = Boolean(anchorEl);
 
@@ -105,9 +107,9 @@ export default function CourseCard({
           borderRadius: 2,
           background: coverImageUrl
             ? undefined
-            : coverColor && coverColor.trim()
-              ? coverColor
-              : 'linear-gradient(135deg, #a855f7, #6366f1)',
+            : coverColor === ''
+              ? theme.palette.primary.main
+              : (coverColor || theme.palette.primary.main),
           position: 'relative',
           overflow: 'hidden',
           display: 'flex',

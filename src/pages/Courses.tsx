@@ -75,6 +75,8 @@ import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import ShoppingBagIcon from '@mui/icons-material/ShoppingBag';
 import SupportAgentIcon from '@mui/icons-material/SupportAgent';
 import HealthAndSafetyIcon from '@mui/icons-material/HealthAndSafety';
+import BuildIcon from '@mui/icons-material/Build';
+import NatureIcon from '@mui/icons-material/Nature';
 import CourseCard from '../components/CourseCard';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import { auth, db } from '../firebase/firebaseConfig';
@@ -127,6 +129,8 @@ const iconOptions = [
   { label: 'Freiwilligenarbeit', value: 'volunteer', Icon: VolunteerActivismIcon, group: 'Community', keywords: ['help'] },
   { label: 'Gesundheit', value: 'health', Icon: HealthAndSafetyIcon, group: 'Community', keywords: ['medizin'] },
   { label: 'Unterstützung', value: 'supporters', Icon: SupportAgentIcon, group: 'Community', keywords: ['service'] },
+  { label: 'Handwerk', value: 'build', Icon: BuildIcon, group: 'Lifestyle', keywords: ['werkstatt', 'diy'] },
+  { label: 'Natur', value: 'nature', Icon: NatureIcon, group: 'Lifestyle', keywords: ['umwelt', 'pflanzen'] },
 ] as const satisfies ReadonlyArray<IconOption>;
 
 type CategoryIconKey = (typeof iconOptions)[number]['value'];
@@ -1145,6 +1149,7 @@ const Courses = () => {
                       sx={{
                         borderRadius: 2,
                         mb: 1,
+                        pr: 14,
                         bgcolor: isCategoryDragging ? 'action.hover' : 'transparent',
                         transition: 'background-color 0.15s ease, transform 0.15s ease',
                         '&:hover': {
@@ -1180,6 +1185,14 @@ const Courses = () => {
                       <ListItemText
                         primary={category.name}
                         secondary={`${usage} Kurs${usage === 1 ? '' : 'e'}`}
+                        sx={{
+                          pr: 1,
+                          '& .MuiListItemText-primary': {
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          },
+                        }}
                       />
                     </ListItem>
                   );
@@ -1215,7 +1228,7 @@ const Courses = () => {
           </Typography>
           <Box
             sx={{
-              maxHeight: (theme) => theme.spacing(45),
+              maxHeight: (theme) => theme.spacing(50),
               overflowY: 'auto',
               pr: 1,
             }}
@@ -1223,9 +1236,9 @@ const Courses = () => {
             <Box
               sx={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
-                gap: 0.75,
-                gridAutoRows: (theme) => theme.spacing(7.5),
+                gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',
+                gap: 0.5,
+                gridAutoRows: (theme) => theme.spacing(6),
               }}
             >
               {iconOptionsList.map((option) => {

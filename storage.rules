@@ -22,5 +22,29 @@ service firebase.storage {
       // Löschen: Nur der Besitzer
       allow delete: if isOwner(userId);
     }
+    
+    // Profilbilder
+    match /profilePictures/{userId} {
+      // Lesen: Nur eingeloggte Nutzer
+      allow read: if isSignedIn();
+      
+      // Schreiben: Nur der Besitzer und Datei maximal 5 MB
+      allow write: if isOwner(userId) && request.resource.size <= 5 * 1024 * 1024;
+      
+      // Löschen: Nur der Besitzer
+      allow delete: if isOwner(userId);
+    }
+    
+    // Firmenlogos
+    match /logos/{userId} {
+      // Lesen: Nur eingeloggte Nutzer
+      allow read: if isSignedIn();
+      
+      // Schreiben: Nur der Besitzer und Datei maximal 2 MB
+      allow write: if isOwner(userId) && request.resource.size <= 2 * 1024 * 1024;
+      
+      // Löschen: Nur der Besitzer
+      allow delete: if isOwner(userId);
+    }
   }
 }

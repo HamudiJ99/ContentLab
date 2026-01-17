@@ -17,12 +17,15 @@ import {
   Stack,
   TextField,
   Typography,
+  Slider,
 } from '@mui/material';
 import PhotoCameraIcon from '@mui/icons-material/PhotoCamera';
 import SaveIcon from '@mui/icons-material/Save';
 import LockResetIcon from '@mui/icons-material/LockReset';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import GavelIcon from '@mui/icons-material/Gavel';
+import Cropper, { type Area } from 'react-easy-crop';
+import 'react-easy-crop/react-easy-crop.css';
 import { FirebaseError } from 'firebase/app';
 import {
   EmailAuthProvider,
@@ -41,12 +44,16 @@ type ProfileForm = {
   displayName: string;
   avatarUrl: string;
   avatarVersion: number | null;
+  logoUrl: string;
+  logoVersion: number | null;
 };
 
 const emptyProfile: ProfileForm = {
   displayName: '',
   avatarUrl: '',
   avatarVersion: null,
+  logoUrl: '',
+  logoVersion: null,
 };
 
 const buildAvatarSrc = (url?: string | null, version?: number | null) => {
@@ -82,6 +89,8 @@ export default function Profile() {
   const [saveLoading, setSaveLoading] = useState(false);
   const [avatarUploading, setAvatarUploading] = useState(false);
   const [pendingAvatarFile, setPendingAvatarFile] = useState<File | null>(null);
+  const [logoUploading, setLogoUploading] = useState(false);
+  const [pendingLogoFile, setPendingLogoFile] = useState<File | null>(null);
   const [passwordForm, setPasswordForm] = useState({ current: '', next: '', confirm: '' });
   const [passwordFeedback, setPasswordFeedback] = useState<{ success?: string; error?: string }>({});
   const [passwordLoading, setPasswordLoading] = useState(false);
@@ -90,8 +99,18 @@ export default function Profile() {
   const [deleteError, setDeleteError] = useState('');
   const [deleteLoading, setDeleteLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const logoFileInputRef = useRef<HTMLInputElement>(null);
   const previewUrlRef = useRef<string | null>(null);
+  const logoPreviewUrlRef = useRef<string | null>(null);
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+  const [logoPreview, setLogoPreview] = useState<string | null>(null);
+  const [logoCropDialogOpen, setLogoCropDialogOpen] = useState(false);
+  const [logoCropImageSrc, setLogoCropImageSrc] = useState<string | null>(null);
+  const [logoCrop, setLogoCrop] = useState({ x: 0, y: 0 });
+  const [logoZoom, setLogoZoom] = useState(1);
+  const [logoCroppedAreaPixels, setLogoCroppedAreaPixels] = useState<Area | null>(null);
+  const [pendingLogoFileName, setPendingLogoFileName] = useState('logo.jpg');
+  const [logoDragActive, setLogoDragActive] = useState(false);
 
   const revokePreviewUrl = () => {
     if (previewUrlRef.current) {
@@ -100,9 +119,21 @@ export default function Profile() {
     }
   };
 
+  const revokeLogoPreviewUrl = () => {
+    if (logoPreviewUrlRef.current) {
+      URL.revokeObjectURL(logoPreviewUrlRef.current);
+      logoPreviewUrlRef.current = null;
+    }
+  };
+
   const clearAvatarPreview = () => {
     revokePreviewUrl();
     setAvatarPreview(null);
+  };
+
+  const clearLogoPreview = () => {
+    revokeLogoPreviewUrl();
+    setLogoPreview(null);
   };
 
   const refreshAuthUser = async () => {
@@ -121,6 +152,7 @@ export default function Profile() {
 
   useEffect(() => () => {
     revokePreviewUrl();
+    revokeLogoPreviewUrl();
   }, []);
 
   useEffect(() => {
@@ -137,6 +169,8 @@ export default function Profile() {
           displayName: data.displayName ?? currentUser.displayName ?? currentUser.email?.split('@')[0] ?? '',
           avatarUrl: data.avatarUrl ?? currentUser.photoURL ?? '',
           avatarVersion: typeof data.avatarVersion === 'number' ? data.avatarVersion : null,
+          logoUrl: data.logoUrl ?? '',
+          logoVersion: typeof data.logoVersion === 'number' ? data.logoVersion : null,
         });
       } catch (error) {
         setProfileFeedback({ error: 'Profil konnte nicht geladen werden.' });
@@ -156,14 +190,18 @@ export default function Profile() {
       return;
     }
     if (!profileForm.displayName.trim()) {
-      setProfileFeedback({ error: 'Bitte einen Accountnamen angeben.' });
+      setProfileFeedback({ error: 'Bitte einen Anzeigenamen angeben.' });
       return;
     }
     setSaveLoading(true);
     setProfileFeedback({});
     const shouldUploadAvatar = Boolean(pendingAvatarFile);
+    const shouldUploadLogo = Boolean(pendingLogoFile);
     if (shouldUploadAvatar) {
       setAvatarUploading(true);
+    }
+    if (shouldUploadLogo) {
+      setLogoUploading(true);
     }
     try {
       let nextAvatarUrl: string | null = profileForm.avatarUrl || null;
@@ -174,6 +212,15 @@ export default function Profile() {
         nextAvatarUrl = await getDownloadURL(storageRef);
         nextAvatarVersion = Date.now();
       }
+
+      let nextLogoUrl: string | null = profileForm.logoUrl || null;
+      let nextLogoVersion: number | null = profileForm.logoVersion;
+      if (pendingLogoFile && currentUser) {
+        const logoStorageRef = ref(storage, `logos/${currentUser.uid}`);
+        await uploadBytes(logoStorageRef, pendingLogoFile);
+        nextLogoUrl = await getDownloadURL(logoStorageRef);
+        nextLogoVersion = Date.now();
+      }
       const profilePayload: Record<string, unknown> = {
         displayName: profileForm.displayName.trim(),
         updatedAt: serverTimestamp(),
@@ -183,6 +230,12 @@ export default function Profile() {
       }
       if (typeof nextAvatarVersion === 'number') {
         profilePayload.avatarVersion = nextAvatarVersion;
+      }
+      if (nextLogoUrl) {
+        profilePayload.logoUrl = nextLogoUrl;
+      }
+      if (typeof nextLogoVersion === 'number') {
+        profilePayload.logoVersion = nextLogoVersion;
       }
       await setDoc(
         doc(db, 'users', currentUser.uid),
@@ -199,10 +252,16 @@ export default function Profile() {
         displayName: profileForm.displayName.trim(),
         avatarUrl: nextAvatarUrl ?? '',
         avatarVersion: nextAvatarVersion,
+        logoUrl: nextLogoUrl ?? '',
+        logoVersion: nextLogoVersion,
       }));
       if (pendingAvatarFile) {
         clearAvatarPreview();
         setPendingAvatarFile(null);
+      }
+      if (pendingLogoFile) {
+        clearLogoPreview();
+        setPendingLogoFile(null);
       }
       setProfileFeedback({ success: 'Profil aktualisiert.' });
     } catch (error) {
@@ -210,6 +269,9 @@ export default function Profile() {
     } finally {
       if (shouldUploadAvatar) {
         setAvatarUploading(false);
+      }
+      if (shouldUploadLogo) {
+        setLogoUploading(false);
       }
       setSaveLoading(false);
     }
@@ -229,16 +291,101 @@ export default function Profile() {
     event.target.value = '';
   };
 
+  const handleLogoUpload = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+    setPendingLogoFileName(file.name || 'logo.jpg');
+    const reader = new FileReader();
+    reader.onload = () => {
+      setLogoCropImageSrc(reader.result as string);
+      setLogoCrop({ x: 0, y: 0 });
+      setLogoZoom(1);
+      setLogoCroppedAreaPixels(null);
+      setLogoCropDialogOpen(true);
+    };
+    reader.onerror = () => {
+      setProfileFeedback({ error: 'Bild konnte nicht geladen werden.' });
+    };
+    reader.readAsDataURL(file);
+    event.target.value = '';
+  };
+
+  const handleLogoCloseCropDialog = () => {
+    setLogoCropDialogOpen(false);
+    setLogoCropImageSrc(null);
+    setLogoCroppedAreaPixels(null);
+    setLogoCrop({ x: 0, y: 0 });
+    setLogoZoom(1);
+  };
+
+  const handleLogoConfirmCrop = async () => {
+    if (!logoCroppedAreaPixels || !logoCropImageSrc) {
+      return;
+    }
+    try {
+      // Use PNG to preserve transparency
+      const mimeType = 'image/png';
+      const blob = await getCroppedBlob(logoCropImageSrc, logoCroppedAreaPixels, mimeType);
+      const croppedFile = new File([blob], pendingLogoFileName, { type: mimeType });
+      
+      revokeLogoPreviewUrl();
+      const previewUrl = URL.createObjectURL(croppedFile);
+      logoPreviewUrlRef.current = previewUrl;
+      setLogoPreview(previewUrl);
+      setPendingLogoFile(croppedFile);
+      setProfileFeedback({ success: 'Logo zugeschnitten. Bitte speichern, um es zu übernehmen.' });
+      handleLogoCloseCropDialog();
+    } catch (error) {
+      setProfileFeedback({ error: 'Logo konnte nicht zugeschnitten werden.' });
+    }
+  };
+
+  const handleLogoCropComplete = (_croppedArea: Area, croppedAreaPixels: Area) => {
+    setLogoCroppedAreaPixels(croppedAreaPixels);
+  };
+  const handleLogoDragOver = (event: React.DragEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setLogoDragActive(true);
+  };
+
+  const handleLogoDragLeave = (event: React.DragEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setLogoDragActive(false);
+  };
+
+  const handleLogoDrop = (event: React.DragEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setLogoDragActive(false);
+
+    if (logoUploading) return;
+
+    const files = event.dataTransfer.files;
+    if (files && files.length > 0) {
+      const file = files[0];
+      if (file.type.startsWith('image/')) {
+        const reader = new FileReader();
+        setPendingLogoFileName(file.name);
+        reader.onload = () => {
+          setLogoCropImageSrc(reader.result as string);
+          setLogoCrop({ x: 0, y: 0 });
+          setLogoZoom(1);
+          setLogoCropDialogOpen(true);
+        };
+        reader.readAsDataURL(file);
+      }
+    }
+  };
   const handlePasswordChange = async () => {
     if (!currentUser || !currentUser.email) {
       return;
     }
-    if (!passwordForm.current || !passwordForm.next || !passwordForm.confirm) {
-      setPasswordFeedback({ error: 'Bitte alle Passwortfelder ausfüllen.' });
-      return;
-    }
-    if (passwordForm.next !== passwordForm.confirm) {
-      setPasswordFeedback({ error: 'Passwörter stimmen nicht überein.' });
+    if (!passwordForm.current || !passwordForm.next) {
+      setPasswordFeedback({ error: 'Bitte aktuelles und neues Passwort eingeben.' });
       return;
     }
     setPasswordLoading(true);
@@ -300,6 +447,7 @@ export default function Profile() {
   }
 
   const avatarSrc = avatarPreview ?? buildAvatarSrc(profileForm.avatarUrl, profileForm.avatarVersion);
+  const logoSrc = logoPreview ?? buildAvatarSrc(profileForm.logoUrl, profileForm.logoVersion);
 
   return (
     <Box sx={{ p: { xs: 2, md: 4 }, maxWidth: 960, mx: 'auto' }}>
@@ -359,7 +507,7 @@ export default function Profile() {
                     <CircularProgress size={48} sx={{ position: 'absolute', top: 36, left: 36 }} />
                   )}
                 </Box>
-                <Box>
+                <Box sx={{ flex: 1 }}>
                   <Typography variant="h5" fontWeight={700}>
                     {profileForm.displayName || 'Neues Profil'}
                   </Typography>
@@ -390,7 +538,7 @@ export default function Profile() {
 
               <Box>
                 <Typography variant="h6" fontWeight={600} mb={2}>
-                  Accountname
+                  Anzeigename
                 </Typography>
                 <TextField
                   label="Name"
@@ -456,13 +604,7 @@ export default function Profile() {
                     onChange={(event) => setPasswordForm((prev) => ({ ...prev, next: event.target.value }))}
                     fullWidth
                   />
-                  <TextField
-                    label="Neues Passwort bestätigen"
-                    type="password"
-                    value={passwordForm.confirm}
-                    onChange={(event) => setPasswordForm((prev) => ({ ...prev, confirm: event.target.value }))}
-                    fullWidth
-                  />
+                  <Box />
                   <Box sx={{ display: 'flex', justifyContent: { xs: 'flex-start', sm: 'flex-end' } }}>
                     <Button
                       variant="contained"
@@ -474,6 +616,107 @@ export default function Profile() {
                     </Button>
                   </Box>
                 </Box>
+              </Box>
+
+              <Divider />
+
+              <Box>
+                <Stack direction="row" spacing={2} alignItems="center" mb={2}>
+                  <PhotoCameraIcon color="primary" />
+                  <Box>
+                    <Typography variant="h6" fontWeight={600}>
+                      Firmenlogo
+                    </Typography>
+                    <Typography color="text.secondary">
+                      Das Logo wird in der Seitenleiste neben dem ContentLab-Namen angezeigt.
+                    </Typography>
+                  </Box>
+                </Stack>
+                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={3} alignItems="flex-start">
+                  <Box>
+                    <Box sx={{ position: 'relative' }}>
+                      <Box
+                        onClick={() => !logoUploading && logoFileInputRef.current?.click()}
+                        onDragOver={handleLogoDragOver}
+                        onDragLeave={handleLogoDragLeave}
+                        onDrop={handleLogoDrop}
+                        sx={{
+                          width: 200,
+                          height: 200,
+                          border: '2px dashed',
+                          borderColor: logoDragActive ? 'primary.main' : (logoSrc ? 'primary.main' : 'divider'),
+                          borderRadius: 2,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          cursor: logoUploading ? 'not-allowed' : 'pointer',
+                          transition: 'all 0.2s ease',
+                          overflow: 'hidden',
+                          bgcolor: (theme) => {
+                            if (logoDragActive) return theme.palette.mode === 'dark' ? 'rgba(33,150,243,0.15)' : 'rgba(33,150,243,0.08)';
+                            return theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.02)';
+                          },
+                          '&:hover': {
+                            borderColor: 'primary.main',
+                            bgcolor: (theme) => theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)',
+                          },
+                        }}
+                      >
+                        {logoSrc ? (
+                          <img
+                            src={logoSrc}
+                            alt="Logo"
+                            style={{
+                              width: '100%',
+                              height: '100%',
+                              objectFit: 'contain',
+                              padding: '16px',
+                            }}
+                          />
+                        ) : (
+                          <Stack alignItems="center" spacing={1}>
+                            <PhotoCameraIcon sx={{ fontSize: 56, color: 'text.disabled' }} />
+                            <Typography variant="caption" color="text.secondary" textAlign="center" px={2}>
+                              Bild hineinziehen oder klicken
+                            </Typography>
+                          </Stack>
+                        )}
+                      </Box>
+                      {logoUploading && (
+                        <CircularProgress size={64} sx={{ position: 'absolute', top: 68, left: 68 }} />
+                      )}
+                    </Box>
+                    <input
+                      ref={logoFileInputRef}
+                      type="file"
+                      accept="image/*"
+                      hidden
+                      onChange={handleLogoUpload}
+                    />
+                  </Box>
+                  <Box sx={{ flex: 1 }}>
+                    <Typography variant="subtitle2" fontWeight={600} mb={1}>
+                      Empfohlenes Format
+                    </Typography>
+                    <Stack spacing={1} mb={2}>
+                      <Typography variant="body2" color="text.secondary">
+                        • Format: PNG mit transparentem Hintergrund
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        • Seitenverhältnis: Quadratisch (1:1)
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        • Mindestgröße: 512 × 512 Pixel
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        • Maximale Dateigröße: 2 MB
+                      </Typography>
+                    </Stack>
+                    <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
+                      Tipp: Ein Logo mit transparentem Hintergrund passt sich automatisch an den Dark Mode an.
+                    </Typography>
+                  </Box>
+                </Stack>
               </Box>
 
               <Divider />
@@ -523,6 +766,54 @@ export default function Profile() {
         </Stack>
       </Card>
 
+      {/* Logo Crop Dialog */}
+      <Dialog
+        open={logoCropDialogOpen}
+        onClose={handleLogoCloseCropDialog}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Logo zuschneiden</DialogTitle>
+        <DialogContent>
+          <Box
+            sx={{
+              position: 'relative',
+              width: '100%',
+              height: 400,
+              backgroundImage: 'linear-gradient(45deg, #ccc 25%, transparent 25%), linear-gradient(-45deg, #ccc 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ccc 75%), linear-gradient(-45deg, transparent 75%, #ccc 75%)',
+              backgroundSize: '20px 20px',
+              backgroundPosition: '0 0, 0 10px, 10px -10px, -10px 0px',
+            }}
+          >
+            <Cropper
+              image={logoCropImageSrc}
+              crop={logoCrop}
+              zoom={logoZoom}
+              aspect={1}
+              onCropChange={setLogoCrop}
+              onZoomChange={setLogoZoom}
+              onCropComplete={handleLogoCropComplete}
+            />
+          </Box>
+          <Box sx={{ mt: 2 }}>
+            <Typography gutterBottom>Zoom</Typography>
+            <Slider
+              value={logoZoom}
+              min={1}
+              max={3}
+              step={0.1}
+              onChange={(_, value) => setLogoZoom(value as number)}
+            />
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleLogoCloseCropDialog}>Abbrechen</Button>
+          <Button onClick={handleLogoConfirmCrop} variant="contained">
+            Zuschneiden
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       <Dialog open={deleteDialogOpen} onClose={() => setDeleteDialogOpen(false)}>
         <DialogTitle>Account löschen</DialogTitle>
         <DialogContent>
@@ -553,4 +844,63 @@ export default function Profile() {
       </Dialog>
     </Box>
   );
+}
+
+// Helper functions for image cropping
+function createImage(url: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.addEventListener('load', () => resolve(image));
+    image.addEventListener('error', (error) => reject(error));
+    image.setAttribute('crossOrigin', 'anonymous');
+    image.src = url;
+  });
+}
+
+async function getCroppedBlob(
+  imageSrc: string,
+  pixelCrop: Area,
+  mimeType: string = 'image/png'
+): Promise<Blob> {
+  const image = await createImage(imageSrc);
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+
+  if (!ctx) {
+    throw new Error('Canvas context not available');
+  }
+
+  canvas.width = pixelCrop.width;
+  canvas.height = pixelCrop.height;
+
+  // Clear canvas to transparent for PNG
+  if (mimeType === 'image/png') {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  }
+
+  ctx.drawImage(
+    image,
+    pixelCrop.x,
+    pixelCrop.y,
+    pixelCrop.width,
+    pixelCrop.height,
+    0,
+    0,
+    pixelCrop.width,
+    pixelCrop.height
+  );
+
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (blob) {
+          resolve(blob);
+        } else {
+          reject(new Error('Canvas is empty'));
+        }
+      },
+      mimeType,
+      mimeType === 'image/png' ? 1.0 : 0.92
+    );
+  });
 }

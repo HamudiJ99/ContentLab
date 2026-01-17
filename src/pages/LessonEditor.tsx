@@ -821,24 +821,14 @@ const LessonEditor = () => {
             {chapter?.title ? `${chapter.title} · ${course?.title ?? ''}` : course?.title ?? ''}
           </Typography>
         </Box>
-        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems="center">
-          <Button
-            variant="outlined"
-            startIcon={<ArrowBackIcon />}
-            onClick={handleBackToCourse}
-            sx={{ textTransform: 'none' }}
-          >
-            Zurück zum Kurs
-          </Button>
-          <Button
-            variant="contained"
-            onClick={handleSaveLesson}
-            disabled={saving || !lessonForm.title.trim() || !isEditableLesson}
-            sx={{ textTransform: 'none', minWidth: 160 }}
-          >
-            {saving ? 'Speichert...' : 'Änderungen speichern'}
-          </Button>
-        </Stack>
+        <Button
+          variant="outlined"
+          startIcon={<ArrowBackIcon />}
+          onClick={handleBackToCourse}
+          sx={{ textTransform: 'none' }}
+        >
+          Zurück zum Kurs
+        </Button>
       </Stack>
 
       {pageError ? (
@@ -1222,9 +1212,14 @@ const LessonEditor = () => {
             >
               Löschen
             </Button>
-            <IconButton onClick={handleBackToCourse} sx={{ display: { xs: 'none', sm: 'inline-flex' } }}>
-              <ArrowBackIcon />
-            </IconButton>
+            <Button
+              variant="contained"
+              onClick={handleSaveLesson}
+              disabled={saving || !lessonForm.title.trim() || !isEditableLesson}
+              sx={{ textTransform: 'none', minWidth: 160 }}
+            >
+              {saving ? 'Speichert...' : 'Änderungen speichern'}
+            </Button>
           </Stack>
         </Stack>
       )}

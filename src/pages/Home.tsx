@@ -386,41 +386,39 @@ export default function Home() {
               icon: <VideocamIcon />,
               title: 'Video-Aufnahmen',
               description: 'Nimm direkt im Browser professionelle Lektionen auf',
-              gradient: `linear-gradient(135deg, ${theme.palette.error.main}, ${theme.palette.error.dark})`,
+              gradient: 'linear-gradient(135deg, #FB6542, #E05030)',
             },
             {
               icon: <AutoStoriesIcon />,
               title: 'Rich Content',
               description: 'Erstelle interaktive Inhalte mit dem integrierten Editor',
-              gradient: `linear-gradient(135deg, ${theme.palette.success.main}, ${theme.palette.success.dark})`,
+              gradient: 'linear-gradient(135deg, #3F681C, #2E4D14)',
             },
             {
               icon: <TimelineIcon />,
               title: 'Fortschritts-Tracking',
               description: 'Verfolge den Lernfortschrift deiner Teilnehmer',
-              gradient: `linear-gradient(135deg, ${theme.palette.info.main}, ${theme.palette.info.dark})`,
+              gradient: 'linear-gradient(135deg, #375E97, #2A4772)',
             },
             {
               icon: <GroupsIcon />,
               title: 'Team-Verwaltung',
               description: 'Verwalte Mitglieder und Berechtigungen zentral',
-              gradient: `linear-gradient(135deg, ${theme.palette.warning.main}, ${theme.palette.warning.dark})`,
+              gradient: 'linear-gradient(135deg, #FFBB00, #D99C00)',
             },
           ].map((feature, index) => (
             <Grid size={{ xs: 12, sm: 6 }} key={index}>
               <Card
+                elevation={0}
                 sx={{
                   height: '100%',
-                  transition: 'all 0.3s',
+                  transition: 'all 0.2s',
+                  boxShadow: 'none !important',
+                  border: '1px solid',
+                  borderColor: 'divider',
                   '&:hover': {
-                    transform: 'translateY(-4px)',
-                    boxShadow: (() => {
-                      const lum = getLuminance(theme.palette.primary.main);
-                      const color = theme.palette.mode === 'dark'
-                        ? (lum < 0.3 ? lighten(theme.palette.primary.main, 0.5) : theme.palette.primary.main)
-                        : (lum > 0.7 ? darken(theme.palette.primary.main, 0.5) : theme.palette.primary.main);
-                      return `0 0 24px ${alpha(color, 0.4)}`;
-                    })(),
+                    bgcolor: alpha(theme.palette.primary.main, 0.02),
+                    boxShadow: 'none !important',
                   },
                 }}
               >
@@ -586,25 +584,25 @@ export default function Home() {
             icon: <VideocamIcon />,
             title: 'Video-Aufnahmen',
             description: 'Nimm Lektionen direkt im Browser auf',
-            gradient: `linear-gradient(135deg, ${theme.palette.error.main}, ${theme.palette.error.dark})`,
+            gradient: 'linear-gradient(135deg, #FB6542, #E05030)',
           },
           {
             icon: <AutoStoriesIcon />,
             title: 'Rich Content',
             description: 'Interaktive Inhalte mit Editor erstellen',
-            gradient: `linear-gradient(135deg, ${theme.palette.success.main}, ${theme.palette.success.dark})`,
+            gradient: 'linear-gradient(135deg, #3F681C, #2E4D14)',
           },
           {
             icon: <TimelineIcon />,
             title: 'Fortschritts-Tracking',
             description: 'Lernfortschritt deiner Teilnehmer verfolgen',
-            gradient: `linear-gradient(135deg, ${theme.palette.info.main}, ${theme.palette.info.dark})`,
+            gradient: 'linear-gradient(135deg, #375E97, #2A4772)',
           },
           {
             icon: <GroupsIcon />,
             title: 'Team-Verwaltung',
             description: 'Mitglieder und Berechtigungen verwalten',
-            gradient: `linear-gradient(135deg, ${theme.palette.warning.main}, ${theme.palette.warning.dark})`,
+            gradient: 'linear-gradient(135deg, #FFBB00, #D99C00)',
           },
         ].map((feature, index) => (
           <Grid size={{ xs: 6, sm: 6, md: 6 }} key={index}>
@@ -614,13 +612,13 @@ export default function Home() {
                 transition: 'all 0.2s',
                 '&:hover': {
                   transform: 'translateY(-2px)',
-                  boxShadow: (() => {
+/*                   boxShadow: (() => {
                     const lum = getLuminance(theme.palette.primary.main);
                     const color = theme.palette.mode === 'dark'
                       ? (lum < 0.3 ? lighten(theme.palette.primary.main, 0.5) : theme.palette.primary.main)
                       : (lum > 0.7 ? darken(theme.palette.primary.main, 0.5) : theme.palette.primary.main);
                     return `0 0 16px ${alpha(color, 0.35)}`;
-                  })(),
+                  })(), */
                 },
               }}
             >
@@ -680,13 +678,15 @@ export default function Home() {
               {recentCourses.slice(0, 3).map((course) => (
                 <Paper
                   key={course.id}
+                  elevation={0}
                   sx={{
                     p: 2,
                     cursor: 'pointer',
                     transition: 'all 0.2s',
+                    boxShadow: 'none !important',
                     '&:hover': {
-                      bgcolor: alpha(theme.palette.primary.main, 0.02),
-                      boxShadow: theme.shadows[2],
+                      bgcolor: alpha(theme.palette.primary.main, 0.08), // vorher 0.02
+                      boxShadow: 'none !important',
                     },
                   }}
                   onClick={() => navigate(`/learn/${course.id}`)}
