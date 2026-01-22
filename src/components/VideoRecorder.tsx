@@ -28,8 +28,18 @@ import {
   ContentCut as CutIcon,
 } from '@mui/icons-material';
 
+import { FFmpeg } from '@ffmpeg/ffmpeg';
+import { fetchFile } from '@ffmpeg/util';
+
 type RecordingMode = 'webcam' | 'screen' | 'both';
-type RecordingState = 'idle' | 'requesting' | 'ready' | 'recording' | 'paused' | 'stopped' | 'reviewing';
+type RecordingState =
+  | 'idle'
+  | 'requesting'
+  | 'ready'
+  | 'recording'
+  | 'paused'
+  | 'stopped'
+  | 'reviewing';
 
 type VideoRecorderProps = {
   onSave: (videoBlob: Blob, duration: number) => void;
@@ -40,12 +50,16 @@ export default function VideoRecorder({ onSave, onCancel }: VideoRecorderProps) 
   const [mode, setMode] = useState<RecordingMode>('webcam');
   const [state, setState] = useState<RecordingState>('idle');
   const [error, setError] = useState<string | null>(null);
+
   const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
   const [trimStart, setTrimStart] = useState(0);
   const [trimEnd, setTrimEnd] = useState(0);
   const [videoDuration, setVideoDuration] = useState(0);
+
   const [recordingDuration, setRecordingDuration] = useState(0);
+
   const [isTrimming, setIsTrimming] = useState(false);
+  const [trimProgress, setTrimProgress] = useState<number>(0);
 
   const videoPreviewRef = useRef<HTMLVideoElement>(null);
   const screenStreamRef = useRef<MediaStream | null>(null);
@@ -55,31 +69,65 @@ export default function VideoRecorder({ onSave, onCancel }: VideoRecorderProps) 
   const recordingTimerRef = useRef<number | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
+  // Fix für “stale state” in requestAnimationFrame-Schleifen
+  const stateRef = useRef<RecordingState>('idle');
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
+
+  // FFmpeg
+  const ffmpegRef = useRef<FFmpeg | null>(null);
+  const ffmpegReadyRef = useRef(false);
+
   useEffect(() => {
     return () => {
       stopAllStreams();
-      if (recordingTimerRef.current) {
-        clearInterval(recordingTimerRef.current);
-      }
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const stopAllStreams = () => {
-    if (screenStreamRef.current) {
-      screenStreamRef.current.getTracks().forEach((track) => track.stop());
-      screenStreamRef.current = null;
-    }
-    if (webcamStreamRef.current) {
-      webcamStreamRef.current.getTracks().forEach((track) => track.stop());
-      webcamStreamRef.current = null;
-    }
+    screenStreamRef.current?.getTracks().forEach((t) => t.stop());
+    webcamStreamRef.current?.getTracks().forEach((t) => t.stop());
+    screenStreamRef.current = null;
+    webcamStreamRef.current = null;
   };
 
   const handleModeChange = (_: React.MouseEvent<HTMLElement>, newMode: RecordingMode | null) => {
-    if (newMode && state === 'idle') {
-      setMode(newMode);
-    }
+    if (newMode && state === 'idle') setMode(newMode);
   };
+
+  const formatTime = (seconds: number) => {
+    const m = Math.floor(seconds / 60);
+    const s = Math.floor(seconds % 60);
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  };
+
+  const getModeLabel = (m: RecordingMode) => {
+    if (m === 'webcam') return 'Webcam-Aufnahme';
+    if (m === 'screen') return 'Bildschirmaufnahme';
+    return 'Screen + Webcam';
+  };
+
+  const ensureFFmpeg = async () => {
+    if (ffmpegReadyRef.current && ffmpegRef.current) return ffmpegRef.current;
+
+    const ffmpeg = new FFmpeg();
+    ffmpeg.on('progress', ({ progress }) => {
+      // progress 0..1
+      setTrimProgress(Math.round((progress || 0) * 100));
+    });
+
+    // Lädt Core/Worker/WASM aus dem Package-Bundle (keine URLs nötig)
+    await ffmpeg.load();
+
+    ffmpegRef.current = ffmpeg;
+    ffmpegReadyRef.current = true;
+    return ffmpeg;
+  };
+
+  /* ===================== RECORDING LOGIK ===================== */
 
   const startRecording = async () => {
     try {
@@ -91,195 +139,142 @@ export default function VideoRecorder({ onSave, onCancel }: VideoRecorderProps) 
       let combinedStream: MediaStream;
 
       if (mode === 'webcam') {
-        // Nur Webcam
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { width: 1920, height: 1080 },
           audio: true,
         });
         webcamStreamRef.current = stream;
         combinedStream = stream;
-
-        if (videoPreviewRef.current) {
-          videoPreviewRef.current.srcObject = stream;
-        }
+        if (videoPreviewRef.current) videoPreviewRef.current.srcObject = stream;
       } else if (mode === 'screen') {
-        // Nur Screen
         const screenStream = await navigator.mediaDevices.getDisplayMedia({
           video: { width: 1920, height: 1080 },
           audio: true,
         });
-        const audioStream = await navigator.mediaDevices.getUserMedia({
-          audio: true,
-          video: false,
-        });
-
+        const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
         screenStreamRef.current = screenStream;
-        const audioTrack = audioStream.getAudioTracks()[0];
-        
+
         combinedStream = new MediaStream([
           ...screenStream.getVideoTracks(),
-          audioTrack,
+          audioStream.getAudioTracks()[0],
         ]);
 
-        if (videoPreviewRef.current) {
-          videoPreviewRef.current.srcObject = combinedStream;
-        }
+        if (videoPreviewRef.current) videoPreviewRef.current.srcObject = combinedStream;
       } else {
-        // Picture-in-Picture (Screen + Webcam)
-        const screenStream = await navigator.mediaDevices.getDisplayMedia({
-          video: { width: 1920, height: 1080 },
-          audio: true,
-        });
-        const webcamStream = await navigator.mediaDevices.getUserMedia({
-          video: { width: 640, height: 480 },
-          audio: true,
-        });
-
+        const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+        const webcamStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
         screenStreamRef.current = screenStream;
         webcamStreamRef.current = webcamStream;
 
-        // Canvas für Picture-in-Picture
         const canvas = document.createElement('canvas');
         canvas.width = 1920;
         canvas.height = 1080;
         canvasRef.current = canvas;
+        const ctx = canvas.getContext('2d')!;
 
-        const ctx = canvas.getContext('2d');
         const screenVideo = document.createElement('video');
         const webcamVideo = document.createElement('video');
-
         screenVideo.srcObject = screenStream;
         webcamVideo.srcObject = webcamStream;
 
         await screenVideo.play();
         await webcamVideo.play();
 
-        const drawFrame = () => {
+        const draw = () => {
           if (!ctx) return;
-          
-          // Screen als Hintergrund
-          ctx.drawImage(screenVideo, 0, 0, 1920, 1080);
-          
-          // Webcam in der Ecke (unten rechts)
-          const pipWidth = 320;
-          const pipHeight = 240;
-          const padding = 20;
-          ctx.drawImage(
-            webcamVideo,
-            1920 - pipWidth - padding,
-            1080 - pipHeight - padding,
-            pipWidth,
-            pipHeight
-          );
 
-          if (state === 'recording' || state === 'ready') {
-            requestAnimationFrame(drawFrame);
+          ctx.drawImage(screenVideo, 0, 0, 1920, 1080);
+          // PiP unten rechts
+          const pipW = 320;
+          const pipH = 240;
+          const pad = 20;
+          ctx.drawImage(webcamVideo, 1920 - pipW - pad, 1080 - pipH - pad, pipW, pipH);
+
+          // weiter zeichnen, solange recording/paused
+          if (stateRef.current === 'recording' || stateRef.current === 'paused') {
+            requestAnimationFrame(draw);
           }
         };
 
-        drawFrame();
-
         const canvasStream = canvas.captureStream(30);
-        const audioTrack = webcamStream.getAudioTracks()[0];
-        
         combinedStream = new MediaStream([
           ...canvasStream.getVideoTracks(),
-          audioTrack,
+          webcamStream.getAudioTracks()[0],
         ]);
 
-        if (videoPreviewRef.current) {
-          videoPreviewRef.current.srcObject = canvasStream;
-        }
+        if (videoPreviewRef.current) videoPreviewRef.current.srcObject = canvasStream;
+
+        // Sobald wir auf recording wechseln, startet die Schleife sauber
+        // (stateRef wird durch useEffect aktualisiert)
+        requestAnimationFrame(draw);
       }
 
-      // MediaRecorder Setup
-      const mediaRecorder = new MediaRecorder(combinedStream, {
+      const recorder = new MediaRecorder(combinedStream, {
         mimeType: 'video/webm;codecs=vp9',
       });
 
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          chunksRef.current.push(event.data);
-        }
+      recorder.ondataavailable = (e) => {
+        if (e.data.size) chunksRef.current.push(e.data);
       };
 
-      mediaRecorder.onstop = () => {
+      recorder.onstop = () => {
         const blob = new Blob(chunksRef.current, { type: 'video/webm' });
+
         setRecordedBlob(blob);
-        
-        // Verwende recordingDuration als initiale Duration
-        const initialDuration = recordingDuration;
-        if (initialDuration > 0) {
-          setVideoDuration(initialDuration);
-          setTrimStart(0);
-          setTrimEnd(initialDuration);
-        }
-        
+        setVideoDuration(recordingDuration);
+        setTrimStart(0);
+        setTrimEnd(recordingDuration);
+
         if (videoPreviewRef.current) {
           videoPreviewRef.current.srcObject = null;
-          const url = URL.createObjectURL(blob);
-          videoPreviewRef.current.src = url;
-          videoPreviewRef.current.onloadedmetadata = () => {
-            const duration = videoPreviewRef.current?.duration || 0;
-            // Nur überschreiben wenn eine gültige Duration verfügbar ist
-            if (duration && isFinite(duration) && duration > 0) {
-              setVideoDuration(duration);
-              setTrimStart(0);
-              setTrimEnd(duration);
-            }
-          };
-          // Fallback: Video laden erzwingen
+          videoPreviewRef.current.src = URL.createObjectURL(blob);
           videoPreviewRef.current.load();
         }
-        
+
         setState('reviewing');
         stopAllStreams();
       };
 
-      mediaRecorderRef.current = mediaRecorder;
-      mediaRecorder.start(100);
+      mediaRecorderRef.current = recorder;
+
+      recorder.start(100);
       setState('recording');
 
-      // Timer für Aufnahmedauer
+      // Timer
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
       recordingTimerRef.current = window.setInterval(() => {
-        setRecordingDuration((prev) => prev + 1);
+        setRecordingDuration((d) => d + 1);
       }, 1000);
-
-    } catch (err) {
-      console.error('Error starting recording:', err);
-      setError('Zugriff auf Kamera/Bildschirm fehlgeschlagen. Bitte Berechtigungen prüfen.');
+    } catch (e) {
+      console.error(e);
+      setError('Zugriff auf Kamera/Bildschirm fehlgeschlagen.');
       setState('idle');
       stopAllStreams();
     }
   };
 
   const pauseRecording = () => {
-    if (mediaRecorderRef.current && state === 'recording') {
-      mediaRecorderRef.current.pause();
-      setState('paused');
-      if (recordingTimerRef.current) {
-        clearInterval(recordingTimerRef.current);
-      }
-    }
+    if (!mediaRecorderRef.current) return;
+    mediaRecorderRef.current.pause();
+    setState('paused');
+    if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
   };
 
   const resumeRecording = () => {
-    if (mediaRecorderRef.current && state === 'paused') {
-      mediaRecorderRef.current.resume();
-      setState('recording');
-      recordingTimerRef.current = window.setInterval(() => {
-        setRecordingDuration((prev) => prev + 1);
-      }, 1000);
-    }
+    if (!mediaRecorderRef.current) return;
+    mediaRecorderRef.current.resume();
+    setState('recording');
+
+    if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+    recordingTimerRef.current = window.setInterval(() => {
+      setRecordingDuration((d) => d + 1);
+    }, 1000);
   };
 
   const stopRecording = () => {
-    if (mediaRecorderRef.current && (state === 'recording' || state === 'paused')) {
-      mediaRecorderRef.current.stop();
-      if (recordingTimerRef.current) {
-        clearInterval(recordingTimerRef.current);
-      }
-    }
+    if (!mediaRecorderRef.current) return;
+    if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+    mediaRecorderRef.current.stop();
   };
 
   const restartRecording = () => {
@@ -289,7 +284,9 @@ export default function VideoRecorder({ onSave, onCancel }: VideoRecorderProps) 
     setTrimStart(0);
     setTrimEnd(0);
     setVideoDuration(0);
+    setError(null);
     setState('idle');
+
     if (videoPreviewRef.current) {
       videoPreviewRef.current.src = '';
       videoPreviewRef.current.srcObject = null;
@@ -297,97 +294,209 @@ export default function VideoRecorder({ onSave, onCancel }: VideoRecorderProps) 
   };
 
   const handleTrim = async () => {
-    if (!recordedBlob || !videoPreviewRef.current) return;
+    if (!recordedBlob) return;
 
+    // Validierung
+    const start = Math.max(0, trimStart);
+    const end = Math.min(videoDuration || 0, trimEnd);
+
+    if (!isFinite(start) || !isFinite(end) || end <= start) {
+      setError('Ungültiger Schnittbereich. Bitte Start < Ende wählen.');
+      return;
+    }
+
+    setError(null);
     setIsTrimming(true);
+    setTrimProgress(0);
 
     try {
-      // Einfaches Trimmen durch Blob-Slicing (für WebM)
-      // Für präzises Trimmen bräuchte man FFmpeg.wasm
-      const trimmedBlob = await trimVideo(recordedBlob);
-      setRecordedBlob(trimmedBlob);
-      
-      if (videoPreviewRef.current) {
-        videoPreviewRef.current.src = URL.createObjectURL(trimmedBlob);
-        videoPreviewRef.current.currentTime = 0;
+      const ffmpeg = await ensureFFmpeg();
+
+      // Clean alte Dateien (best effort)
+      try {
+        await ffmpeg.deleteFile('input.webm');
+        await ffmpeg.deleteFile('output.webm');
+      } catch {
+        // ignore
       }
-    } catch (err) {
-      console.error('Trimming error:', err);
-      setError('Video konnte nicht geschnitten werden.');
+
+      await ffmpeg.writeFile('input.webm', await fetchFile(recordedBlob));
+
+      // Re-Encode (robust & “echtes Schneiden”)
+      // -ss/-to vor -i ist schneller, kann aber ungenauer sein.
+      // Für Genauigkeit: -ss/-to nach -i. Wir nutzen Genauigkeit.
+      await ffmpeg.exec([
+        '-i',
+        'input.webm',
+        '-ss',
+        String(start),
+        '-to',
+        String(end),
+        '-c:v',
+        'libvpx-vp9',
+        '-crf',
+        '32',
+        '-b:v',
+        '0',
+        '-c:a',
+        'libopus',
+        'output.webm',
+      ]);
+
+      const out = await ffmpeg.readFile('output.webm');
+
+      const data = out as Uint8Array;
+
+      // 🔥 ERZWINGT echten ArrayBuffer (kein SharedArrayBuffer)
+      const copiedBuffer = Uint8Array.from(data).buffer;
+
+      const trimmed = new Blob([copiedBuffer], { type: 'video/webm' });
+
+
+      setRecordedBlob(trimmed);
+
+      const newDuration = Math.max(0, end - start);
+      setVideoDuration(newDuration);
+      setTrimStart(0);
+      setTrimEnd(newDuration);
+
+      if (videoPreviewRef.current) {
+        videoPreviewRef.current.srcObject = null;
+        videoPreviewRef.current.src = URL.createObjectURL(trimmed);
+        videoPreviewRef.current.currentTime = 0;
+        videoPreviewRef.current.load();
+      }
+    } catch (e) {
+      console.error(e);
+      setError('Schneiden fehlgeschlagen. Bitte erneut versuchen.');
     } finally {
       setIsTrimming(false);
+      setTrimProgress(0);
     }
-  };
-
-  const trimVideo = async (blob: Blob): Promise<Blob> => {
-    // Vereinfachtes Trimmen - für Produktions-Code würde man FFmpeg.wasm verwenden
-    // Hier geben wir das Original zurück
-    return blob;
   };
 
   const handleSave = () => {
-    if (recordedBlob) {
-      // Verwende videoDuration wenn verfügbar, sonst recordingDuration als Fallback
-      const finalDuration = videoDuration > 0 ? videoDuration : recordingDuration;
-      console.log('VideoRecorder handleSave: videoDuration =', videoDuration, ', recordingDuration =', recordingDuration, ', using =', finalDuration);
-      onSave(recordedBlob, finalDuration);
-    }
+    if (!recordedBlob) return;
+    // videoDuration ist nach Trim die “neue” Dauer
+    onSave(recordedBlob, videoDuration);
   };
 
-  const formatTime = (seconds: number): string => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  };
+  /* ===================== UI ===================== */
 
   return (
-    <Dialog open fullScreen>
+    <Dialog open maxWidth="md" fullWidth onClose={onCancel}>
       <DialogTitle>
-        <Stack direction="row" alignItems="center" justifyContent="space-between">
+        <Stack direction="row" justifyContent="space-between" alignItems="center">
           <Typography variant="h6">Video aufnehmen</Typography>
-          <IconButton edge="end" onClick={onCancel}>
+          <IconButton onClick={onCancel}>
             <CloseIcon />
           </IconButton>
         </Stack>
       </DialogTitle>
 
-      <DialogContent>
-        <Stack spacing={3}>
+      <DialogContent sx={{ p: 4 }}>
+        <Stack spacing={4}>
           {error && <Alert severity="error">{error}</Alert>}
 
-          {/* Modus-Auswahl */}
+          {state === 'requesting' && (
+            <Stack direction="row" spacing={2} alignItems="center" justifyContent="center">
+              <CircularProgress size={28} />
+              <Typography>Zugriff wird angefordert…</Typography>
+            </Stack>
+          )}
+
           {state === 'idle' && (
-            <Box sx={{ display: 'flex', justifyContent: 'center', mb: 2 }}>
-              <ToggleButtonGroup
-                value={mode}
-                exclusive
-                onChange={handleModeChange}
-                aria-label="Aufnahmemodus"
-              >
+            <Stack alignItems="center" spacing={1.5}>
+              <Typography fontWeight={600}>Aufnahmemodus wählen</Typography>
+
+              <ToggleButtonGroup value={mode} exclusive onChange={handleModeChange} size="small">
                 <ToggleButton value="webcam" aria-label="Webcam">
-                  <Stack alignItems="center" spacing={1} sx={{ px: 2, py: 1 }}>
-                    <VideocamIcon />
+                  <Stack alignItems="center" spacing={0.5} sx={{ px: 1.5, py: 0.5 }}>
+                    <VideocamIcon fontSize="small" />
                     <Typography variant="caption">Webcam</Typography>
                   </Stack>
                 </ToggleButton>
-                <ToggleButton value="screen" aria-label="Screen">
-                  <Stack alignItems="center" spacing={1} sx={{ px: 2, py: 1 }}>
-                    <ScreenShareIcon />
+
+                <ToggleButton value="screen" aria-label="Bildschirm">
+                  <Stack alignItems="center" spacing={0.5} sx={{ px: 1.5, py: 0.5 }}>
+                    <ScreenShareIcon fontSize="small" />
                     <Typography variant="caption">Screen</Typography>
                   </Stack>
                 </ToggleButton>
+
                 <ToggleButton value="both" aria-label="Beides">
-                  <Stack alignItems="center" spacing={1} sx={{ px: 2, py: 1 }}>
-                    <PictureInPictureIcon />
+                  <Stack alignItems="center" spacing={0.5} sx={{ px: 1.5, py: 0.5 }}>
+                    <PictureInPictureIcon fontSize="small" />
                     <Typography variant="caption">Beides</Typography>
                   </Stack>
                 </ToggleButton>
               </ToggleButtonGroup>
-            </Box>
+
+
+            </Stack>
           )}
 
-          {/* Video Preview */}
-          <Card sx={{ bgcolor: 'black', aspectRatio: '16/9', position: 'relative' }}>
+          {/* Preview */}
+          <Card
+            sx={{
+              height: 480,
+              border: '1px solid',
+              borderColor: 'divider',
+              bgcolor: 'black',
+              position: 'relative',
+              overflow: 'hidden',
+            }}
+          >
+            {/* Mode badge (immer sichtbar) */}
+            <Box
+              sx={{
+                position: 'absolute',
+                top: 12,
+                right: 12,
+                bgcolor: 'rgba(0,0,0,0.65)',
+                color: 'white',
+                px: 1.5,
+                py: 0.75,
+                borderRadius: 1,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 0.75,
+                zIndex: 2,
+              }}
+            >
+              {mode === 'webcam' && <VideocamIcon sx={{ fontSize: 16 }} />}
+              {mode === 'screen' && <ScreenShareIcon sx={{ fontSize: 16 }} />}
+              {mode === 'both' && <PictureInPictureIcon sx={{ fontSize: 16 }} />}
+              <Typography variant="caption" sx={{ color: 'white' }}>
+                {getModeLabel(mode)}
+              </Typography>
+            </Box>
+
+            {/* Recording timer (während Aufnahme sichtbar) */}
+            {(state === 'recording' || state === 'paused') && (
+              <Box
+                sx={{
+                  position: 'absolute',
+                  top: 12,
+                  left: 12,
+                  bgcolor: state === 'recording' ? 'error.main' : 'warning.main',
+                  color: 'white',
+                  px: 1.5,
+                  py: 0.75,
+                  borderRadius: 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 1,
+                  zIndex: 2,
+                }}
+              >
+                <RecordIcon sx={{ fontSize: 16 }} />
+                <Typography variant="caption" fontWeight={700} sx={{ color: 'white' }}>
+                  {formatTime(recordingDuration)}
+                </Typography>
+              </Box>
+            )}
+
             <video
               ref={videoPreviewRef}
               autoPlay={state === 'recording' || state === 'paused'}
@@ -395,68 +504,67 @@ export default function VideoRecorder({ onSave, onCancel }: VideoRecorderProps) 
               controls={state === 'reviewing'}
               style={{ width: '100%', height: '100%', objectFit: 'contain' }}
             />
-
-            {/* Recording Indicator */}
-            {(state === 'recording' || state === 'paused') && (
-              <Box
-                sx={{
-                  position: 'absolute',
-                  top: 16,
-                  left: 16,
-                  bgcolor: state === 'recording' ? 'error.main' : 'warning.main',
-                  color: 'white',
-                  px: 2,
-                  py: 1,
-                  borderRadius: 1,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 1,
-                }}
-              >
-                <RecordIcon sx={{ fontSize: 16 }} />
-                <Typography variant="body2" fontWeight={600}>
-                  {formatTime(recordingDuration)}
-                </Typography>
-              </Box>
-            )}
           </Card>
 
-          {/* Trimmer */}
-          {state === 'reviewing' && videoDuration > 0 && isFinite(videoDuration) && (
-            <Card sx={{ p: 2 }}>
-              <Stack spacing={2}>
-                <Stack direction="row" alignItems="center" spacing={2}>
-                  <CutIcon />
-                  <Typography variant="subtitle2">Video schneiden</Typography>
+          {/* Trimming */}
+          {state === 'reviewing' && recordedBlob && videoDuration > 0 && isFinite(videoDuration) && (
+            <Card sx={{ p: 3 }}>
+              <Stack spacing={3}>
+                <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
+                  <Stack direction="row" spacing={1} alignItems="center">
+                    <CutIcon fontSize="small" />
+                    <Typography fontWeight={600}>Video schneiden</Typography>
+                  </Stack>
+
+                  {isTrimming && (
+                    <Stack direction="row" spacing={1.5} alignItems="center">
+                      <CircularProgress size={18} />
+                      <Typography variant="caption" color="text.secondary">
+                        {trimProgress > 0 ? `${trimProgress}%` : 'Lädt…'}
+                      </Typography>
+                    </Stack>
+                  )}
                 </Stack>
-                
+
                 <Box>
-                  <Typography variant="caption" color="text.secondary" gutterBottom>
-                    Start: {formatTime(Math.floor(trimStart))}
+                  <Typography variant="caption" color="text.secondary">
+                    Start: {formatTime(trimStart)}
                   </Typography>
                   <Slider
                     value={trimStart}
-                    onChange={(_, value) => setTrimStart(value as number)}
+                    onChange={(_, v) => {
+                      const next = Number(v);
+                      // Start darf nicht >= Ende sein
+                      const safe = Math.min(next, Math.max(0, trimEnd - 0.1));
+                      setTrimStart(safe);
+                    }}
                     min={0}
                     max={videoDuration}
                     step={0.1}
                     valueLabelDisplay="auto"
-                    valueLabelFormat={(value) => formatTime(Math.floor(value))}
+                    valueLabelFormat={(v) => formatTime(Number(v))}
+                    disabled={isTrimming}
                   />
                 </Box>
 
                 <Box>
-                  <Typography variant="caption" color="text.secondary" gutterBottom>
-                    Ende: {formatTime(Math.floor(trimEnd))}
+                  <Typography variant="caption" color="text.secondary">
+                    Ende: {formatTime(trimEnd)}
                   </Typography>
                   <Slider
                     value={trimEnd}
-                    onChange={(_, value) => setTrimEnd(value as number)}
+                    onChange={(_, v) => {
+                      const next = Number(v);
+                      // Ende darf nicht <= Start sein
+                      const safe = Math.max(next, trimStart + 0.1);
+                      setTrimEnd(safe);
+                    }}
                     min={0}
                     max={videoDuration}
                     step={0.1}
                     valueLabelDisplay="auto"
-                    valueLabelFormat={(value) => formatTime(Math.floor(value))}
+                    valueLabelFormat={(v) => formatTime(Number(v))}
+                    disabled={isTrimming}
                   />
                 </Box>
 
@@ -466,101 +574,66 @@ export default function VideoRecorder({ onSave, onCancel }: VideoRecorderProps) 
                   onClick={handleTrim}
                   disabled={isTrimming || trimStart >= trimEnd}
                 >
-                  {isTrimming ? 'Wird geschnitten...' : 'Schneiden anwenden'}
+                  {isTrimming ? 'Schneide…' : 'Schnitt anwenden'}
                 </Button>
+
+                <Typography variant="caption" color="text.secondary">
+                  Hinweis: Das Schneiden kann beim ersten Mal länger dauern, da FFmpeg geladen wird.
+                </Typography>
               </Stack>
             </Card>
           )}
-
-          {/* Controls */}
-          <Stack direction="row" spacing={2} justifyContent="center">
-            {state === 'idle' && (
-              <Button
-                variant="contained"
-                size="large"
-                startIcon={<RecordIcon />}
-                onClick={startRecording}
-                color="error"
-              >
-                Aufnahme starten
-              </Button>
-            )}
-
-            {state === 'requesting' && (
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                <CircularProgress size={24} />
-                <Typography>Zugriff wird angefordert...</Typography>
-              </Box>
-            )}
-
-            {state === 'recording' && (
-              <>
-                <Button
-                  variant="contained"
-                  size="large"
-                  startIcon={<PauseIcon />}
-                  onClick={pauseRecording}
-                >
-                  Pause
-                </Button>
-                <Button
-                  variant="contained"
-                  size="large"
-                  color="error"
-                  startIcon={<StopIcon />}
-                  onClick={stopRecording}
-                >
-                  Stop
-                </Button>
-              </>
-            )}
-
-            {state === 'paused' && (
-              <>
-                <Button
-                  variant="contained"
-                  size="large"
-                  startIcon={<RecordIcon />}
-                  onClick={resumeRecording}
-                  color="error"
-                >
-                  Fortsetzen
-                </Button>
-                <Button
-                  variant="contained"
-                  size="large"
-                  startIcon={<StopIcon />}
-                  onClick={stopRecording}
-                >
-                  Stop
-                </Button>
-              </>
-            )}
-
-            {state === 'reviewing' && (
-              <>
-                <Button
-                  variant="outlined"
-                  size="large"
-                  startIcon={<ReplayIcon />}
-                  onClick={restartRecording}
-                >
-                  Neustarten
-                </Button>
-                <Button
-                  variant="contained"
-                  size="large"
-                  startIcon={<SaveIcon />}
-                  onClick={handleSave}
-                  color="primary"
-                >
-                  Aufnahme speichern
-                </Button>
-              </>
-            )}
-          </Stack>
         </Stack>
       </DialogContent>
+
+      {/* Controls immer unten */}
+      <Box sx={{ p: 3, borderTop: '1px solid', borderColor: 'divider' }}>
+        <Stack direction="row" spacing={2} justifyContent="center">
+          {state === 'idle' && (
+            <Button
+              color="error"
+              variant="contained"
+              onClick={startRecording}
+              startIcon={<RecordIcon />}
+            >
+              Aufnahme starten
+            </Button>
+          )}
+
+          {state === 'recording' && (
+            <>
+              <Button onClick={pauseRecording} startIcon={<PauseIcon />}>
+                Pause
+              </Button>
+              <Button color="error" onClick={stopRecording} startIcon={<StopIcon />}>
+                Stop
+              </Button>
+            </>
+          )}
+
+          {state === 'paused' && (
+            <>
+              <Button color="error" onClick={resumeRecording} startIcon={<RecordIcon />}>
+                Fortsetzen
+              </Button>
+              <Button onClick={stopRecording} startIcon={<StopIcon />}>
+                Stop
+              </Button>
+            </>
+          )}
+
+          {state === 'reviewing' && (
+            <>
+              <Button onClick={restartRecording} startIcon={<ReplayIcon />}>
+                Neu
+              </Button>
+              <Button variant="contained" onClick={handleSave} startIcon={<SaveIcon />}>
+                Speichern
+              </Button>
+            </>
+          )}
+        </Stack>
+      </Box>
     </Dialog>
   );
 }

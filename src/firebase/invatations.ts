@@ -1,4 +1,4 @@
-// Einladungstoken generieren
+/* // Einladungstoken generieren
 import { v4 as uuidv4 } from 'uuid';
 import { addDoc, collection } from 'firebase/firestore';
 import { db } from '../firebase/firebaseConfig';
@@ -17,4 +17,4 @@ async function inviteMemberToCourse(email: string, courseId: string) {
   });
   // Hier: Firebase Function triggert E-Mail-Versand automatisch
 }
-// ...existing code...
+// ...existing code... */
