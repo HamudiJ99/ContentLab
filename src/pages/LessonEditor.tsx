@@ -1161,7 +1161,8 @@ const LessonEditor = () => {
                         Video aufnehmen
                       </Typography>
                       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                        Nimm ein Video mit deiner Webcam oder deinem Bildschirm auf.
+                        Nimm ein Video mit deiner Webcam oder deinem Bildschirm auf. <br></br>
+                        Maximale Dateigröße für Uploads: 1 GB.
                       </Typography>
                       <Button
                         variant="contained"
