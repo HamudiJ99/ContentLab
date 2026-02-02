@@ -461,7 +461,7 @@ export default function Dashboard() {
   if (!currentUser) {
     return (
       <Box sx={{ p: 4, maxWidth: 1160, mx: 'auto' }}>
-        <Alert severity="info">Bitte melde dich an, um deine Kurse zu sehen.</Alert>
+        <Alert severity="info">Bitte melde dich an, um dein Dashboard zu sehen.</Alert>
       </Box>
     );
   }

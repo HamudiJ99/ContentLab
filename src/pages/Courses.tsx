@@ -28,6 +28,7 @@ import {
   Avatar,
   Divider,
   Switch,
+  Alert,
 } from '@mui/material';
 import type { SelectChangeEvent } from '@mui/material/Select';
 import SearchIcon from '@mui/icons-material/Search';
@@ -917,6 +918,14 @@ const Courses = () => {
     void persistCategoryOrder(updatedCategories);
     setDraggingCategoryId(null);
   };
+
+  if (!currentUser) {
+    return (
+      <Box sx={{ p: 4, maxWidth: 1160, mx: 'auto' }}>
+        <Alert severity="info">Bitte melde dich an, um deine Kurse zu sehen.</Alert>
+      </Box>
+    );
+  }
 
   return (
     <Box

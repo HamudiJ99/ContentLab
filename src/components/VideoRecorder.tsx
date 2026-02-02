@@ -497,13 +497,23 @@ export default function VideoRecorder({ onSave, onCancel }: VideoRecorderProps) 
               </Box>
             )}
 
-            <video
-              ref={videoPreviewRef}
-              autoPlay={state === 'recording' || state === 'paused'}
-              muted={state !== 'reviewing'}
-              controls={state === 'reviewing'}
-              style={{ width: '100%', height: '100%', objectFit: 'contain' }}
-            />
+            {/* Video-Preview während Aufnahme/Anfrage */}
+            {(state === 'recording' || state === 'paused' || state === 'requesting' || state === 'idle') && (
+              <video
+                ref={videoPreviewRef}
+                autoPlay={state === 'recording' || state === 'paused'}
+                muted
+                style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+              />
+            )}
+            {/* Review-Video mit Controls und src (Download, Zeit etc.) */}
+            {state === 'reviewing' && recordedBlob && (
+              <video
+                src={URL.createObjectURL(recordedBlob)}
+                controls
+                style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+              />
+            )}
           </Card>
 
           {/* Trimming */}
