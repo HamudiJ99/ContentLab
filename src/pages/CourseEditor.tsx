@@ -305,6 +305,7 @@ const CourseEditor = () => {
       return new Set();
     }
   });
+  const [expandedSubchapters, setExpandedSubchapters] = useState<Set<string>>(new Set());
   const [statusMenu, setStatusMenu] = useState<{ anchorEl: HTMLElement | null; chapterId: string | null }>({
     anchorEl: null,
     chapterId: null,
@@ -1122,9 +1123,10 @@ const CourseEditor = () => {
   };
 
   const handleDeleteLesson = async (chapterId: string, lessonId: string) => {
-    if (!courseRef || !window.confirm('Lektion wirklich löschen?')) {
+    if (!courseRef) {
       return;
     }
+    
     try {
       const chapterRef = doc(courseRef, 'chapters', chapterId);
       const lessonRef = doc(chapterRef, 'lessons', lessonId);
@@ -1136,6 +1138,15 @@ const CourseEditor = () => {
       
       const lessonData = lessonSnapshot.data();
       const lessonType = (lessonData.type as LessonType) ?? 'text';
+      
+      // Bestätigung basierend auf Typ
+      const confirmMessage = lessonType === 'subchapter' 
+        ? 'Unterkapitel wirklich löschen?' 
+        : 'Lektion wirklich löschen?';
+      
+      if (!window.confirm(confirmMessage)) {
+        return;
+      }
       
       await deleteDoc(lessonRef);
       
@@ -1279,6 +1290,18 @@ const CourseEditor = () => {
       } else {
         next.add(chapterId);
         ensureLessonsListener(chapterId);
+      }
+      return next;
+    });
+  };
+
+  const toggleSubchapter = (subchapterId: string) => {
+    setExpandedSubchapters((prev) => {
+      const next = new Set(prev);
+      if (next.has(subchapterId)) {
+        next.delete(subchapterId);
+      } else {
+        next.add(subchapterId);
       }
       return next;
     });
@@ -1769,6 +1792,8 @@ const CourseEditor = () => {
                         }
                         setSelectedLessons(newSelection);
                       }}
+                      expandedSubchapters={expandedSubchapters}
+                      toggleSubchapter={toggleSubchapter}
                     />
                   ))}
                 </Stack>
@@ -2378,13 +2403,62 @@ const CourseEditor = () => {
         <MenuItem
           onClick={() => {
             if (lessonActionsMenu.chapterId && lessonActionsMenu.lessonId) {
-              handleDuplicateLesson(lessonActionsMenu.chapterId, lessonActionsMenu.lessonId);
+              const chapter = chapters.find((c) => c.id === lessonActionsMenu.chapterId);
+              if (chapter) {
+                const lessons = lessonsByChapter[chapter.id] || [];
+                const lesson = lessons.find((l) => l.id === lessonActionsMenu.lessonId);
+                if (lesson) {
+                  // Umbenennen 
+                  if (lesson.type === 'subchapter') {
+                    const newName = window.prompt('Unterkapitel umbenennen:', lesson.title);
+                    if (newName && newName.trim() && courseRef) {
+                      const chapterRef = doc(courseRef, 'chapters', chapter.id);
+                      const lessonRef = doc(chapterRef, 'lessons', lesson.id);
+                      updateDoc(lessonRef, { title: newName.trim() }).catch(() => {
+                        setPageError('Unterkapitel konnte nicht umbenannt werden.');
+                      });
+                    }
+                  } else {
+                    const newName = window.prompt('Lektion umbenennen:', lesson.title);
+                    if (newName && newName.trim() && courseRef) {
+                      const chapterRef = doc(courseRef, 'chapters', chapter.id);
+                      const lessonRef = doc(chapterRef, 'lessons', lesson.id);
+                      updateDoc(lessonRef, { title: newName.trim() }).catch(() => {
+                        setPageError('Lektion konnte nicht umbenannt werden.');
+                      });
+                    }
+                  }
+                }
+              }
             }
             handleCloseMenus();
           }}
         >
-          Duplizieren
+          Umbenennen
         </MenuItem>
+        {(() => {
+          const lesson = lessonActionsMenu.chapterId && lessonActionsMenu.lessonId
+            ? (lessonsByChapter[lessonActionsMenu.chapterId] || []).find(
+                (l) => l.id === lessonActionsMenu.lessonId
+              )
+            : null;
+          // Duplizieren nur für normale Lektionen, nicht für Unterkapitel
+          if (lesson?.type === 'subchapter') {
+            return null;
+          }
+          return (
+            <MenuItem
+              onClick={() => {
+                if (lessonActionsMenu.chapterId && lessonActionsMenu.lessonId) {
+                  handleDuplicateLesson(lessonActionsMenu.chapterId, lessonActionsMenu.lessonId);
+                }
+                handleCloseMenus();
+              }}
+            >
+              Duplizieren
+            </MenuItem>
+          );
+        })()}
         <MenuItem
           onClick={() => {
             if (lessonActionsMenu.chapterId && lessonActionsMenu.lessonId) {
@@ -2656,6 +2730,8 @@ type ChapterCardProps = {
   selectionMode?: boolean;
   selectedLessons?: Set<string>;
   onToggleLessonSelection?: (lessonId: string) => void;
+  expandedSubchapters: Set<string>;
+  toggleSubchapter: (subchapterId: string) => void;
 };
 
 const ChapterCard = ({
@@ -2672,6 +2748,8 @@ const ChapterCard = ({
   selectionMode = false,
   selectedLessons = new Set(),
   onToggleLessonSelection,
+  expandedSubchapters,
+  toggleSubchapter,
 }: ChapterCardProps & { statusStyles: ReturnType<typeof getStatusStyles> }) => {
   const statusConfig = statusStyles[chapter.status];
   const avatarColor = chapter.coverColor || 'primary.main';
@@ -2784,6 +2862,7 @@ const ChapterCard = ({
           {subchapters.map((subchapter) => {
             const children = lessonsByParent[subchapter.id] ?? [];
             const containerId = getSubchapterContainerId(chapter.id, subchapter.id);
+            const isSubchapterExpanded = expandedSubchapters.has(subchapter.id);
             return (
               <Box key={subchapter.id} mb={2.5}>
                 <Paper
@@ -2800,34 +2879,53 @@ const ChapterCard = ({
                     alignItems={{ xs: 'flex-start', sm: 'center' }}
                     justifyContent="space-between"
                   >
-                    <Stack direction="row" spacing={1.5} alignItems="center">
+                    <Stack direction="row" spacing={1.5} alignItems="center" sx={{ flex: 1 }}>
+                      <IconButton
+                        size="small"
+                        onClick={() => toggleSubchapter(subchapter.id)}
+                        sx={{ ml: -0.5 }}
+                      >
+                        {isSubchapterExpanded ? <KeyboardArrowUpIcon /> : <KeyboardArrowDownIcon />}
+                      </IconButton>
                       <Avatar sx={{ width: 44, height: 44, bgcolor: lessonTypeConfig.subchapter.color, color: '#fff' }}>
                         {lessonTypeConfig.subchapter.icon}
                       </Avatar>
-                      <Box>
+                      <Box sx={{ flex: 1 }}>
                         <Typography fontWeight={600}>{subchapter.title}</Typography>
                         <Typography variant="caption" color="text.secondary">
-                          Unterkapitel
+                          Unterkapitel • {children.length} Lektion{children.length !== 1 ? 'en' : ''}
                         </Typography>
                       </Box>
                     </Stack>
-                    <Button
-                      startIcon={<AddIcon />}
-                      size="small"
-                      variant="outlined"
-                      sx={{ textTransform: 'none' }}
-                      onClick={() => onAddLesson(chapter.id, subchapter.id)}
-                    >
-                      Lektion hinzufügen
-                    </Button>
+                    <Stack direction="row" spacing={1}>
+                      <Button
+                        startIcon={<AddIcon />}
+                        size="small"
+                        variant="outlined"
+                        sx={{ textTransform: 'none' }}
+                        onClick={() => onAddLesson(chapter.id, subchapter.id)}
+                      >
+                        Lektion hinzufügen
+                      </Button>
+                      <IconButton
+                        size="small"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onLessonActionsMenuOpen(chapter.id, subchapter.id, event.currentTarget);
+                        }}
+                      >
+                        <MoreVertIcon fontSize="small" />
+                      </IconButton>
+                    </Stack>
                   </Stack>
-                  <Box mt={2}>
-                    <LessonContainer
-                      containerId={containerId}
-                      chapterId={chapter.id}
-                      parentLessonId={subchapter.id}
-                      lessons={children}
-                    >
+                  {isSubchapterExpanded && (
+                    <Box mt={2}>
+                      <LessonContainer
+                        containerId={containerId}
+                        chapterId={chapter.id}
+                        parentLessonId={subchapter.id}
+                        lessons={children}
+                      >
                       {(items) =>
                         items.length ? (
                           <Stack spacing={1.25}>
@@ -2850,8 +2948,9 @@ const ChapterCard = ({
                           <LessonDropPlaceholder label="Noch keine Lektionen in diesem Unterkapitel." />
                         )
                       }
-                    </LessonContainer>
-                  </Box>
+                      </LessonContainer>
+                    </Box>
+                  )}
                 </Paper>
               </Box>
             );

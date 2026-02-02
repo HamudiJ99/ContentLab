@@ -42,8 +42,27 @@ service cloud.firestore {
       allow read, write: if isOwner(userId);
     }
 
+    // Members Collection - erlaube Self-Registration bei pending invitations
+    match /users/{userId}/members/{memberId} {
+      // Owner kann alles
+      allow read, write, delete: if isOwner(userId);
+      
+      // Ein neu registrierter User kann sich selbst als Member eintragen
+      // wenn seine E-Mail im Dokument steht
+      allow create: if signedIn() && 
+        request.resource.data.email != null && 
+        authEmail() != null && 
+        request.resource.data.email.lower() == authEmail();
+    }
+
     match /users/{userId}/{document=**} {
       allow read, write: if isOwner(userId);
+    }
+
+    // Enrollments - User können ihre eigenen enrollments lesen
+    match /users/{userId}/enrollments/{courseId} {
+      allow read: if isOwner(userId);
+      allow write, delete: if isOwner(userId);
     }
 
     match /users/{userId}/courses/{courseId} {
@@ -79,6 +98,21 @@ service cloud.firestore {
 
       allow delete: if signedIn() && resource.data.ownerId == request.auth.uid;
       allow delete: if signedIn() && isInvitee(resource.data);
+    }
+
+    // Pending Invitations - für nicht-registrierte Nutzer
+    match /pendingInvitations/{email} {
+      // Nur Kursbesitzer können erstellen/aktualisieren
+      allow create, update: if signedIn();
+      
+      // Jeder authentifizierte Nutzer kann lesen (für automatische Zuweisung bei Registrierung)
+      allow read: if signedIn();
+      
+      // Nur der Nutzer mit dieser E-Mail oder ein Owner kann löschen
+      allow delete: if signedIn() && (
+        authEmail() == email ||
+        exists(/databases/$(database)/documents/pendingInvitations/$(email))
+      );
     }
   }
 }

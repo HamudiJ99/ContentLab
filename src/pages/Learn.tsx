@@ -33,6 +33,7 @@ import ArticleOutlinedIcon from '@mui/icons-material/ArticleOutlined';
 import PictureAsPdfOutlinedIcon from '@mui/icons-material/PictureAsPdfOutlined';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import RadioButtonUncheckedIcon from '@mui/icons-material/RadioButtonUnchecked';
+import FolderIcon from '@mui/icons-material/Folder';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
@@ -68,6 +69,7 @@ type Lesson = {
   content?: string;
   pdfUrl?: string;
   videoUrl?: string;
+  parentLessonId?: string;
 };
 
 type FlatLesson = Lesson & {
@@ -86,6 +88,7 @@ export default function Learn() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedChapters, setExpandedChapters] = useState<Set<string>>(new Set());
+  const [expandedSubchapters, setExpandedSubchapters] = useState<Set<string>>(new Set());
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
   useEffect(() => {
@@ -181,8 +184,9 @@ export default function Learn() {
               pdfUrl: doc.data().pdfUrl,
               videoUrl: doc.data().videoUrl,
               status: doc.data().status,
+              parentLessonId: doc.data().parentLessonId,
             }))
-            .filter((lesson) => lesson.type !== 'subchapter' && lesson.status === 'published')
+            .filter((lesson) => lesson.status === 'published')
             .sort((a, b) => a.position - b.position)
             .map(({ status, ...lesson }) => lesson);
         }
@@ -252,12 +256,36 @@ export default function Learn() {
     loadCourseData();
   }, [currentUser, courseId]);
 
-  const allLessons: FlatLesson[] = chapters.flatMap((chapter) =>
-    (lessonsByChapter[chapter.id] || []).map((lesson) => ({
-      ...lesson,
-      chapterTitle: chapter.title,
-    }))
-  );
+  const allLessons: FlatLesson[] = chapters.flatMap((chapter) => {
+    const chapterLessons = lessonsByChapter[chapter.id] || [];
+    const standaloneLessons = chapterLessons.filter(l => !l.parentLessonId && l.type !== 'subchapter');
+    const subchapters = chapterLessons.filter(l => l.type === 'subchapter');
+    
+    const result: FlatLesson[] = [];
+    
+    // Füge eigenständige Lektionen hinzu
+    standaloneLessons.forEach(lesson => {
+      result.push({
+        ...lesson,
+        chapterTitle: chapter.title,
+      });
+    });
+    
+    // Füge Unterkapitel mit ihren Kindern hinzu
+    subchapters.forEach(subchapter => {
+      const subLessons = chapterLessons.filter(l => l.parentLessonId === subchapter.id);
+      // Unterkapitel selbst nicht hinzufügen (nicht anklickbar)
+      // Nur die Kinder hinzufügen
+      subLessons.forEach(lesson => {
+        result.push({
+          ...lesson,
+          chapterTitle: chapter.title,
+        });
+      });
+    });
+    
+    return result;
+  });
 
   const currentLesson = currentLessonId
     ? allLessons.find((lesson) => lesson.id === currentLessonId)
@@ -349,6 +377,18 @@ export default function Learn() {
         next.delete(chapterId);
       } else {
         next.add(chapterId);
+      }
+      return next;
+    });
+  };
+
+  const handleToggleSubchapter = (subchapterId: string) => {
+    setExpandedSubchapters((prev) => {
+      const next = new Set(prev);
+      if (next.has(subchapterId)) {
+        next.delete(subchapterId);
+      } else {
+        next.add(subchapterId);
       }
       return next;
     });
@@ -836,7 +876,10 @@ export default function Learn() {
                 </Typography>
                 {chapters.map((chapter) => {
             const chapterLessons = lessonsByChapter[chapter.id] || [];
-            const chapterCompleted = chapterLessons.every((lesson) =>
+            const standaloneLessons = chapterLessons.filter(l => !l.parentLessonId && l.type !== 'subchapter');
+            const subchapters = chapterLessons.filter(l => l.type === 'subchapter');
+            const allClickableLessons = chapterLessons.filter(l => l.type !== 'subchapter');
+            const chapterCompleted = allClickableLessons.every((lesson) =>
               completedLessons.has(lesson.id)
             );
 
@@ -859,7 +902,7 @@ export default function Learn() {
                 </AccordionSummary>
                 <AccordionDetails sx={{ p: 0 }}>
                   <List disablePadding>
-                    {chapterLessons.map((lesson) => {
+                    {standaloneLessons.map((lesson) => {
                       const isCompleted = completedLessons.has(lesson.id);
                       const isActive = currentLessonId === lesson.id;
 
@@ -889,6 +932,75 @@ export default function Learn() {
                             }}
                           />
                         </ListItemButton>
+                      );
+                    })}
+                    {subchapters.map((subchapter) => {
+                      const subLessons = chapterLessons.filter(l => l.parentLessonId === subchapter.id);
+                      const allSubCompleted = subLessons.every((lesson) => completedLessons.has(lesson.id));
+                      const isSubchapterExpanded = expandedSubchapters.has(subchapter.id);
+
+                      return (
+                        <Box key={subchapter.id}>
+                          <ListItemButton
+                            onClick={() => handleToggleSubchapter(subchapter.id)}
+                            sx={{
+                              pl: 4,
+                              bgcolor: 'action.hover',
+                              '&:hover': { bgcolor: 'action.selected' },
+                            }}
+                          >
+                            <ListItemIcon sx={{ minWidth: 36 }}>
+                              {isSubchapterExpanded ? <ExpandMoreIcon /> : <ChevronRightIcon />}
+                            </ListItemIcon>
+                            <ListItemIcon sx={{ minWidth: 36 }}>
+                              {allSubCompleted ? (
+                                <CheckCircleIcon color="success" fontSize="small" />
+                              ) : (
+                                <FolderIcon fontSize="small" color="primary" />
+                              )}
+                            </ListItemIcon>
+                            <ListItemText
+                              primary={subchapter.title}
+                              primaryTypographyProps={{
+                                variant: 'body2',
+                                fontWeight: 600,
+                                color: 'text.secondary',
+                              }}
+                            />
+                          </ListItemButton>
+                          {isSubchapterExpanded && subLessons.map((lesson) => {
+                            const isCompleted = completedLessons.has(lesson.id);
+                            const isActive = currentLessonId === lesson.id;
+
+                            return (
+                              <ListItemButton
+                                key={lesson.id}
+                                selected={isActive}
+                                onClick={() => handleSelectLesson(lesson.id, chapter.id)}
+                                sx={{
+                                  pl: 7,
+                                  borderLeft: isActive ? '3px solid' : '3px solid transparent',
+                                  borderColor: 'primary.main',
+                                }}
+                              >
+                                <ListItemIcon sx={{ minWidth: 36 }}>
+                                  {isCompleted ? (
+                                    <CheckCircleIcon color="success" fontSize="small" />
+                                  ) : (
+                                    getLessonIcon(lesson.type)
+                                  )}
+                                </ListItemIcon>
+                                <ListItemText
+                                  primary={lesson.title}
+                                  primaryTypographyProps={{
+                                    variant: 'body2',
+                                    fontWeight: isActive ? 600 : 400,
+                                  }}
+                                />
+                              </ListItemButton>
+                            );
+                          })}
+                        </Box>
                       );
                     })}
                   </List>

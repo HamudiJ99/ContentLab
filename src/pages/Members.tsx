@@ -12,6 +12,7 @@ import {
   query,
   orderBy,
 } from 'firebase/firestore';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 import {
   Alert,
   alpha,
@@ -89,6 +90,7 @@ type Member = {
   groupIds: string[];
   assignedCourseIds: string[];
   courseInvitations?: CourseInvitation[];
+  photoURL?: string;
 };
 
 type MemberGroup = {
@@ -227,6 +229,7 @@ export default function Members() {
           loginCount: data.loginCount ?? 0,
           groupIds: Array.isArray(data.groupIds) ? data.groupIds : [],
           assignedCourseIds: Array.isArray(data.assignedCourseIds) ? data.assignedCourseIds : [],
+          photoURL: data.photoURL ?? undefined,
           courseInvitations: Array.isArray(data.courseInvitations)
             ? data.courseInvitations.map((inv: any) => ({
                 courseId: inv.courseId,
@@ -604,6 +607,131 @@ export default function Members() {
       const course = courses.find((c) => c.id === courseId);
       const normalizedEmail = selectedMember.email.trim().toLowerCase();
       
+      // Prüfe ob ein registrierter User mit dieser E-Mail existiert
+      const functions = getFunctions();
+      const checkUserExists = httpsCallable<{email: string}, {exists: boolean}>(functions, 'checkUserExists');
+      const result = await checkUserExists({ email: normalizedEmail });
+      const isRegisteredUser = result.data.exists;
+      
+      if (!isRegisteredUser) {
+        // Speichere in pendingInvitations Collection
+        const pendingInvitationRef = doc(db, 'pendingInvitations', normalizedEmail);
+        
+        // Hole existierende pending invitation (falls vorhanden)
+        const pendingSnapshot = await getDocs(
+          query(collection(db, 'pendingInvitations'))
+        );
+        const existingPending = pendingSnapshot.docs.find(
+          (doc) => doc.id === normalizedEmail
+        );
+        
+        const courseInvitation = {
+          courseId,
+          courseTitle: course?.title ?? 'Kurs',
+          courseDescription: course?.description ?? '',
+          coverImageUrl: course?.coverImageUrl ?? null,
+          coverColor: course?.coverColor ?? null,
+          ownerId: currentUser.uid,
+          ownerEmail: currentUser.email ?? null,
+          ownerName: currentUser.displayName ?? null,
+          invitedAt: new Date(),
+        };
+        
+        if (existingPending) {
+          // Füge neuen Kurs zu existierender pending invitation hinzu
+          const existingCourses = existingPending.data().courses || [];
+          const courseExists = existingCourses.some((c: any) => c.courseId === courseId);
+          
+          if (!courseExists) {
+            await updateDoc(pendingInvitationRef, {
+              courses: [...existingCourses, courseInvitation],
+              updatedAt: serverTimestamp(),
+            });
+          }
+          
+          // E-Mail wird NICHT nochmal gesendet - bereits beim ersten Mal gesendet
+          setSnackbar({ 
+            open: true, 
+            message: 'Einladung wurde hinzugefügt. E-Mail wurde bereits früher versendet.', 
+            severity: 'info' 
+          });
+        } else {
+          // Erstelle neue pending invitation
+          await setDoc(pendingInvitationRef, {
+            email: normalizedEmail,
+            courses: [courseInvitation],
+            emailSent: false, // Wird von Cloud Function auf true gesetzt
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+          
+          // Cloud Function onCreate-Trigger funktioniert nicht (Eventarc-Problem)
+          // Workaround: Rufe Callable Function direkt auf und übergebe Kursdaten direkt
+          try {
+            const sendEmail = httpsCallable<{email: string, courses: any[]}, {success: boolean, message?: string}>(
+              functions, 
+              'sendPendingInvitationEmailManual'
+            );
+            await sendEmail({ 
+              email: normalizedEmail, 
+              courses: [courseInvitation] 
+            });
+            
+            setSnackbar({ 
+              open: true, 
+              message: 'Einladung wurde versendet. E-Mail wird an nicht-registrierten Nutzer gesendet.', 
+              severity: 'success' 
+            });
+          } catch (emailError) {
+            console.error('E-Mail konnte nicht gesendet werden:', emailError);
+            setSnackbar({ 
+              open: true, 
+              message: 'Einladung wurde gespeichert, aber E-Mail-Versand fehlgeschlagen.', 
+              severity: 'error' 
+            });
+          }
+        }
+        
+        // Update courseInvitations in member document trotzdem
+        const updatedInvitations = [...(selectedMember.courseInvitations ?? [])];
+        const existingIndex = updatedInvitations.findIndex((inv) => inv.courseId === courseId);
+        
+        if (existingIndex >= 0) {
+          updatedInvitations[existingIndex] = {
+            courseId,
+            status: 'invited',
+            invitedAt: new Date(),
+          };
+        } else {
+          updatedInvitations.push({
+            courseId,
+            status: 'invited',
+            invitedAt: new Date(),
+          });
+        }
+
+        const memberRef = doc(db, 'users', currentUser.uid, 'members', selectedMember.id);
+        await updateDoc(memberRef, {
+          courseInvitations: updatedInvitations,
+          updatedAt: serverTimestamp(),
+        });
+
+        setMembers((prev) =>
+          prev.map((m) =>
+            m.id === selectedMember.id
+              ? { ...m, courseInvitations: updatedInvitations }
+              : m
+          )
+        );
+
+        setSelectedMember((prev) =>
+          prev ? { ...prev, courseInvitations: updatedInvitations } : prev
+        );
+        
+        return;
+      }
+      
+      // Normaler Flow für registrierte User
       const invitationRef = doc(
         db,
         'courseInvitations',
@@ -689,13 +817,33 @@ export default function Members() {
       setSnackbar({ open: true, message: 'Bitte geben Sie eine gültige E-Mail-Adresse ein.', severity: 'error' });
       return;
     }
+    // Prüfe, ob die E-Mail-Adresse die eigene ist
+    if (currentUser.email && newMember.email.toLowerCase() === currentUser.email.toLowerCase()) {
+      setSnackbar({ open: true, message: 'Sie können sich nicht selbst als Mitglied hinzufügen.', severity: 'error' });
+      return;
+    }
     setAddMemberLoading(true);
     try {
+      // Hole photoURL von registriertem User (falls vorhanden)
+      let photoURL: string | null = null;
+      try {
+        const functions = getFunctions();
+        const checkUserExists = httpsCallable<{email: string}, {exists: boolean, photoURL: string | null, displayName: string | null}>(functions, 'checkUserExists');
+        const result = await checkUserExists({ email: newMember.email.trim().toLowerCase() });
+        if (result.data.exists && result.data.photoURL) {
+          photoURL = result.data.photoURL;
+        }
+      } catch (error) {
+        // Ignoriere Fehler, wenn User nicht existiert
+        console.log('User nicht registriert oder photoURL nicht verfügbar');
+      }
+
       const payload = {
         name: newMember.name,
         email: newMember.email,
         role: newMember.role,
         status: 'active' as MemberStatus,
+        photoURL: photoURL,
         groupIds: [],
         assignedCourseIds: [],
         courseInvitations: [],
@@ -710,6 +858,7 @@ export default function Members() {
           email: payload.email,
           role: payload.role,
           status: payload.status,
+          photoURL: photoURL ?? undefined,
           groupIds: [],
           assignedCourseIds: [],
           courseInvitations: [],
@@ -1124,7 +1273,7 @@ export default function Members() {
                   <TableRow key={member.id} hover sx={{ cursor: 'pointer' }} onClick={() => handleSelectMember(member)}>
                     <TableCell>
                       <Stack direction="row" spacing={2} alignItems="center">
-                        <Avatar>{initials(member.name)}</Avatar>
+                        <Avatar src={member.photoURL}>{!member.photoURL && initials(member.name)}</Avatar>
                         <Box>
                           <Typography fontWeight={600}>{member.name}</Typography>
                           <Typography variant="body2" color="text.secondary">
@@ -1581,24 +1730,19 @@ export default function Members() {
                               />
                             </Stack>
                           }
+                          secondaryTypographyProps={{ component: 'div' }}
                         />
                         <Stack spacing={0.5}>
-                          {isAssigned ? (
-                            <Button
-                              size="small"
-                              variant="outlined"
-                              onClick={() => handleSendCourseInvitation(course.id)}
-                            >
-                              {invitationStatus === 'invited' ? 'Erneut einladen' : 'Einladen'}
-                            </Button>
-                          ) : (
-                            <Chip
-                              label="Verfügbar"
-                              color="default"
-                              size="small"
-                              onClick={() => toggleCourseSelection(course.id)}
-                            />
-                          )}
+                          <Button
+                            size="small"
+                            variant={isAssigned ? "outlined" : "contained"}
+                            onClick={() => isAssigned ? handleSendCourseInvitation(course.id) : toggleCourseSelection(course.id)}
+                          >
+                            {isAssigned 
+                              ? (invitationStatus === 'invited' ? 'Erneut einladen' : 'Einladen')
+                              : 'Einladen'
+                            }
+                          </Button>
                         </Stack>
                       </ListItem>
                     );

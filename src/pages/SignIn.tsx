@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { FormEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Alert,
   Box,
@@ -13,9 +13,10 @@ import {
   Typography,
   useTheme,
 } from '@mui/material';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, updateProfile } from 'firebase/auth';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, updateProfile, type User } from 'firebase/auth';
 import { FirebaseError } from 'firebase/app';
-import { auth } from '../firebase/firebaseConfig';
+import { auth, db } from '../firebase/firebaseConfig';
+import { doc, getDoc, setDoc, deleteDoc, serverTimestamp, addDoc, collection } from 'firebase/firestore';
 import Footer from '../components/Footer';
 
 type AuthMode = 'login' | 'register';
@@ -47,6 +48,17 @@ export default function SignIn() {
   const [info, setInfo] = useState('');
   const navigate = useNavigate();
   const theme = useTheme();
+  const [searchParams] = useSearchParams();
+
+  // E-Mail Vorbefüllung aus URL Parameter
+  useEffect(() => {
+    const emailParam = searchParams.get('email');
+    if (emailParam) {
+      setEmail(emailParam);
+      setMode('register'); // Automatisch auf Registrierung wechseln
+    }
+  }, [searchParams]);
+  
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError('');
@@ -81,6 +93,10 @@ export default function SignIn() {
           displayName: displayName.trim(),
         });
         
+        // Prüfe ob es pending invitations für diese E-Mail gibt
+        const normalizedEmail = email.trim().toLowerCase();
+        await processPendingInvitations(normalizedEmail, userCredential.user);
+        
         setInfo('Konto erstellt! Du bist jetzt angemeldet.');
         navigate('/');
       }
@@ -88,6 +104,119 @@ export default function SignIn() {
       setError(translateError(firebaseError));
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Verarbeite pending invitations nach Registrierung
+  const processPendingInvitations = async (email: string, user: User) => {
+    try {
+      console.log('🔍 Prüfe pending invitations für:', email);
+      const pendingInvitationRef = doc(db, 'pendingInvitations', email);
+      const pendingSnapshot = await getDoc(pendingInvitationRef);
+      
+      if (!pendingSnapshot.exists()) {
+        console.log('ℹ️ Keine pending invitations gefunden');
+        return; // Keine pending invitations
+      }
+      
+      const pendingData = pendingSnapshot.data();
+      const courses = pendingData.courses || [];
+      
+      if (courses.length === 0) {
+        console.log('ℹ️ Pending invitation existiert, aber keine Kurse darin');
+        return;
+      }
+      
+      console.log(`✅ ${courses.length} Kurs-Einladung(en) gefunden für ${email}`, courses);
+      
+      // Für jeden Kursbesitzer erstelle Member-Eintrag
+      const ownerMap = new Map<string, any[]>();
+      
+      courses.forEach((course: any) => {
+        const ownerId = course.ownerId;
+        if (!ownerMap.has(ownerId)) {
+          ownerMap.set(ownerId, []);
+        }
+        ownerMap.get(ownerId)?.push(course);
+      });
+      
+      // Erstelle für jeden Owner ein Member-Dokument
+      for (const [ownerId, ownerCourses] of ownerMap.entries()) {
+        console.log(`📝 Erstelle Member und Enrollments für Owner: ${ownerId}`, ownerCourses);
+        
+        const memberRef = collection(db, 'users', ownerId, 'members');
+        const courseIds = ownerCourses.map(c => c.courseId);
+        
+        await addDoc(memberRef, {
+          name: displayName.trim(),
+          email: email,
+          photoURL: user.photoURL || null,
+          role: 'student',
+          status: 'active',
+          assignedCourseIds: courseIds,
+          groupIds: [],
+          courseInvitations: courseIds.map(cId => ({
+            courseId: cId,
+            status: 'invited',
+            invitedAt: new Date(),
+          })),
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+        
+        console.log(`✅ Member-Dokument erstellt für ${email}`);
+        
+        // Erstelle courseInvitations Dokumente + Enrollments für jeden Kurs
+        for (const course of ownerCourses) {
+          console.log(`📚 Erstelle Enrollment für Kurs: ${course.courseTitle} (${course.courseId})`);
+          
+          const invitationId = `${email}_${course.courseId}_${ownerId}`;
+          const invitationRef = doc(db, 'courseInvitations', invitationId);
+          
+          await setDoc(invitationRef, {
+            inviteeEmail: email,
+            ownerId: ownerId,
+            ownerEmail: course.ownerEmail,
+            ownerName: course.ownerName,
+            courseId: course.courseId,
+            courseTitle: course.courseTitle,
+            courseDescription: course.courseDescription,
+            coverImageUrl: course.coverImageUrl,
+            coverColor: course.coverColor,
+            status: 'pending',
+            createdAt: serverTimestamp(),
+          });
+          
+          console.log(`✅ CourseInvitation erstellt: ${invitationId}`);
+          
+          // Erstelle enrollment damit Kurs im Dashboard erscheint
+          const enrollmentRef = doc(db, 'users', user.uid, 'enrollments', course.courseId);
+          await setDoc(enrollmentRef, {
+            courseId: course.courseId,
+            ownerId: ownerId,
+            courseTitle: course.courseTitle,
+            courseDescription: course.courseDescription,
+            coverImageUrl: course.coverImageUrl,
+            coverColor: course.coverColor,
+            ownerEmail: course.ownerEmail,
+            ownerName: course.ownerName,
+            startedAt: serverTimestamp(),
+            createdAt: serverTimestamp(),
+          });
+          
+          console.log(`✅ Enrollment erstellt in users/${user.uid}/enrollments/${course.courseId}`);
+        }
+        
+        console.log(`✅ Member-Eintrag erstellt für Owner ${ownerId} mit ${courseIds.length} Kurs(en)`);
+      }
+      
+      // Lösche pending invitation
+      await deleteDoc(pendingInvitationRef);
+      console.log('✅ Pending invitations verarbeitet und gelöscht');
+      
+    } catch (error) {
+      console.error('Fehler beim Verarbeiten von pending invitations:', error);
+      // Fehler nicht werfen - Registrierung soll trotzdem erfolgreich sein
     }
   };
 
