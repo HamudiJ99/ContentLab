@@ -2533,11 +2533,12 @@ const SortableLessonCard = ({
     <Paper
       ref={setNodeRef}
       variant="outlined"
+      onClick={selectionMode ? onToggleSelection : undefined}
       sx={{
         borderRadius: 2,
         p: 1.5,
         backgroundColor: (theme) => (theme.palette.mode === 'dark' ? '#111325' : theme.palette.background.default),
-        cursor: isClickableLesson ? 'pointer' : 'default',
+        cursor: selectionMode ? 'pointer' : (isClickableLesson ? 'pointer' : 'default'),
         opacity: isDragging ? 0.6 : 1,
         transform: CSS.Transform.toString(transform),
         transition,
@@ -2556,13 +2557,13 @@ const SortableLessonCard = ({
         <Avatar 
           variant="rounded" 
           sx={{ width: 48, height: 48, bgcolor: typeConfig.color, color: '#fff' }}
-          onClick={isClickableLesson && !selectionMode ? () => onLessonClick(chapterId, lesson) : undefined}
+          onClick={isClickableLesson && !selectionMode ? (e) => { e.stopPropagation(); onLessonClick(chapterId, lesson); } : undefined}
         >
           {typeConfig.icon}
         </Avatar>
         <Box 
           sx={{ flex: 1, cursor: isClickableLesson && !selectionMode ? 'pointer' : 'default' }}
-          onClick={isClickableLesson && !selectionMode ? () => onLessonClick(chapterId, lesson) : undefined}
+          onClick={isClickableLesson && !selectionMode ? (e) => { e.stopPropagation(); onLessonClick(chapterId, lesson); } : undefined}
         >
           <Typography fontWeight={600}>{lesson.title}</Typography>
           <Typography variant="caption" color="text.secondary">

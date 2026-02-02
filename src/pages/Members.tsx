@@ -19,6 +19,7 @@ import {
   Avatar,
   Box,
   Button,
+  Checkbox,
   Chip,
   CircularProgress,
   Dialog,
@@ -34,6 +35,7 @@ import {
   ListItem,
   ListItemAvatar,
   ListItemText,
+  ListItemIcon,
   Menu,
   MenuItem,
   OutlinedInput,
@@ -61,10 +63,19 @@ import GroupsIcon from '@mui/icons-material/Groups';
 import SchoolIcon from '@mui/icons-material/School';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import SaveIcon from '@mui/icons-material/Save';
+import MoreVertIcon from '@mui/icons-material/MoreVert';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import { auth, db } from '../firebase/firebaseConfig';
 
-type MemberStatus = 'invited' | 'active' | 'inactive';
+type MemberStatus = 'active' | 'inactive';
 type MemberRole = 'member' | 'admin';
+type CourseInvitationStatus = 'not-invited' | 'invited';
+
+type CourseInvitation = {
+  courseId: string;
+  status: CourseInvitationStatus;
+  invitedAt?: Date | null;
+};
 
 type Member = {
   id: string;
@@ -77,6 +88,7 @@ type Member = {
   loginCount?: number;
   groupIds: string[];
   assignedCourseIds: string[];
+  courseInvitations?: CourseInvitation[];
 };
 
 type MemberGroup = {
@@ -99,10 +111,14 @@ type Course = {
 
 type MemberSortOption = 'date-desc' | 'name-asc';
 
-const statusConfig: Record<MemberStatus, { label: string; color: 'default' | 'success' | 'warning' | 'primary' }> = {
-  invited: { label: 'Eingeladen', color: 'primary' },
+const statusConfig: Record<MemberStatus, { label: string; color: 'default' | 'success' | 'warning' | 'primary' | 'error' }> = {
   active: { label: 'Aktiv', color: 'success' },
-  inactive: { label: 'Inaktiv', color: 'default' },
+  inactive: { label: 'Inaktiv', color: 'error' },
+};
+
+const courseInvitationStatusConfig: Record<CourseInvitationStatus, { label: string; color: 'default' | 'success' | 'primary' }> = {
+  'not-invited': { label: 'Nicht eingeladen', color: 'default' },
+  'invited': { label: 'Eingeladen', color: 'primary' },
 };
 
 const roleOptions: { value: MemberRole; label: string }[] = [
@@ -143,9 +159,9 @@ export default function Members() {
   const [initialGroupCourseIds, setInitialGroupCourseIds] = useState<string[]>([]);
   const [groupDrawerSaving, setGroupDrawerSaving] = useState(false);
   const [selectedCourseIds, setSelectedCourseIds] = useState<string[]>([]);
-  const [initialCourseIds, setInitialCourseIds] = useState<string[]>([]);
   const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>([]);
   const [selectedRole, setSelectedRole] = useState<MemberRole>('member');
+  const [selectedMemberName, setSelectedMemberName] = useState('');
   const [drawerSaving, setDrawerSaving] = useState(false);
   const [addMemberOpen, setAddMemberOpen] = useState(false);
   const [addMemberLoading, setAddMemberLoading] = useState(false);
@@ -157,6 +173,15 @@ export default function Members() {
   const [memberToDelete, setMemberToDelete] = useState<Member | null>(null);
   const [deleteMemberLoading, setDeleteMemberLoading] = useState(false);
   const [confirmExportOpen, setConfirmExportOpen] = useState(false);
+  const [groupMenuAnchorEl, setGroupMenuAnchorEl] = useState<null | HTMLElement>(null);
+  const [selectedGroupForMenu, setSelectedGroupForMenu] = useState<MemberGroup | null>(null);
+  const [groupToDelete, setGroupToDelete] = useState<MemberGroup | null>(null);
+  const [deleteGroupLoading, setDeleteGroupLoading] = useState(false);
+  const [groupSortOption, setGroupSortOption] = useState<MemberSortOption>('date-desc');
+  const [groupFilterAnchorEl, setGroupFilterAnchorEl] = useState<null | HTMLElement>(null);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedGroupsForDeletion, setSelectedGroupsForDeletion] = useState<Set<string>>(new Set());
+  const [deleteMultipleGroupsLoading, setDeleteMultipleGroupsLoading] = useState(false);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => setCurrentUser(user));
@@ -184,17 +209,31 @@ export default function Members() {
       );
       const loadedMembers: Member[] = membersSnapshot.docs.map((memberDoc) => {
         const data = memberDoc.data();
+        const rawStatus = data.status as string;
+        let status: MemberStatus = 'active';
+        if (rawStatus === 'inactive') {
+          status = 'inactive';
+        } else if (rawStatus === 'invited') {
+          status = 'active';
+        }
         return {
           id: memberDoc.id,
           name: data.name ?? 'Unbenanntes Mitglied',
           email: data.email ?? '',
-          status: (data.status as MemberStatus) ?? 'inactive',
+          status,
           role: (data.role as MemberRole) ?? 'member',
           createdAt: data.createdAt?.toDate?.() ?? null,
           lastLogin: data.lastLogin?.toDate?.() ?? null,
           loginCount: data.loginCount ?? 0,
           groupIds: Array.isArray(data.groupIds) ? data.groupIds : [],
           assignedCourseIds: Array.isArray(data.assignedCourseIds) ? data.assignedCourseIds : [],
+          courseInvitations: Array.isArray(data.courseInvitations)
+            ? data.courseInvitations.map((inv: any) => ({
+                courseId: inv.courseId,
+                status: inv.status ?? 'not-invited',
+                invitedAt: inv.invitedAt?.toDate?.() ?? null,
+              }))
+            : [],
         };
       });
       setMembers(loadedMembers);
@@ -311,6 +350,19 @@ export default function Members() {
     return sortedList;
   }, [members, search, sortOption]);
 
+  const filteredGroups = useMemo(() => {
+    const sortedList = [...groups].sort((a, b) => {
+      if (groupSortOption === 'name-asc') {
+        return a.name.localeCompare(b.name, 'de', { sensitivity: 'base' });
+      }
+      const dateA = a.createdAt ? a.createdAt.getTime() : 0;
+      const dateB = b.createdAt ? b.createdAt.getTime() : 0;
+      return dateB - dateA;
+    });
+
+    return sortedList;
+  }, [groups, groupSortOption]);
+
   const handleFilterMenuClose = () => {
     setFilterAnchorEl(null);
   };
@@ -320,20 +372,85 @@ export default function Members() {
     handleFilterMenuClose();
   };
 
+  const handleGroupFilterMenuClose = () => {
+    setGroupFilterAnchorEl(null);
+  };
+
+  const handleGroupSortChange = (option: MemberSortOption) => {
+    setGroupSortOption(option);
+    handleGroupFilterMenuClose();
+  };
+
+  const toggleSelectionMode = () => {
+    setSelectionMode(!selectionMode);
+    setSelectedGroupsForDeletion(new Set());
+  };
+
+  const toggleGroupSelection = (groupId: string) => {
+    const newSelection = new Set(selectedGroupsForDeletion);
+    if (newSelection.has(groupId)) {
+      newSelection.delete(groupId);
+    } else {
+      newSelection.add(groupId);
+    }
+    setSelectedGroupsForDeletion(newSelection);
+  };
+
+  const handleDeleteSelectedGroups = async () => {
+    if (!currentUser || selectedGroupsForDeletion.size === 0) return;
+    setDeleteMultipleGroupsLoading(true);
+    try {
+      const groupsToDelete = Array.from(selectedGroupsForDeletion);
+      
+      for (const groupId of groupsToDelete) {
+        // Entferne Gruppe aus allen Mitgliedern
+        const membersInGroup = members.filter((member) => member.groupIds.includes(groupId));
+        for (const member of membersInGroup) {
+          const updatedGroupIds = member.groupIds.filter((id) => id !== groupId);
+          const memberRef = doc(db, 'users', currentUser.uid, 'members', member.id);
+          await updateDoc(memberRef, {
+            groupIds: updatedGroupIds,
+            updatedAt: serverTimestamp(),
+          });
+        }
+
+        // Lösche Gruppe
+        await deleteDoc(doc(db, 'users', currentUser.uid, 'memberGroups', groupId));
+      }
+
+      setGroups((prev) => prev.filter((group) => !selectedGroupsForDeletion.has(group.id)));
+      setMembers((prev) =>
+        prev.map((member) => ({
+          ...member,
+          groupIds: member.groupIds.filter((id) => !selectedGroupsForDeletion.has(id)),
+        }))
+      );
+
+      setSelectedGroupsForDeletion(new Set());
+      setSelectionMode(false);
+      setSnackbar({ open: true, message: `${groupsToDelete.length} Gruppe(n) wurden gelöscht.`, severity: 'success' });
+    } catch (error) {
+      console.error('Gruppen konnten nicht gelöscht werden', error);
+      setSnackbar({ open: true, message: 'Gruppen konnten nicht gelöscht werden.', severity: 'error' });
+    } finally {
+      setDeleteMultipleGroupsLoading(false);
+    }
+  };
+
   const handleSelectMember = (member: Member) => {
     setSelectedMember(member);
     setSelectedCourseIds(member.assignedCourseIds);
-    setInitialCourseIds(member.assignedCourseIds);
     setSelectedGroupIds(member.groupIds);
     setSelectedRole(member.role);
+    setSelectedMemberName(member.name);
   };
 
   const handleDrawerClose = () => {
     setSelectedMember(null);
     setSelectedCourseIds([]);
-    setInitialCourseIds([]);
     setSelectedGroupIds([]);
     setSelectedRole('member');
+    setSelectedMemberName('');
   };
 
   const handleSelectGroup = (group: MemberGroup) => {
@@ -430,22 +547,16 @@ export default function Members() {
 
   const handleSaveAssignments = async () => {
     if (!currentUser || !selectedMember) return;
-    const addedCourseIds = selectedCourseIds.filter((id) => !initialCourseIds.includes(id));
-    const removedCourseIds = initialCourseIds.filter((id) => !selectedCourseIds.includes(id));
-    let nextStatus: MemberStatus = selectedMember.status ?? 'inactive';
-    if (selectedCourseIds.length === 0) {
-      nextStatus = 'inactive';
-    } else if (addedCourseIds.length > 0 || nextStatus === 'inactive') {
-      nextStatus = 'invited';
-    }
+    
     setDrawerSaving(true);
     try {
       const memberRef = doc(db, 'users', currentUser.uid, 'members', selectedMember.id);
       await updateDoc(memberRef, {
+        name: selectedMemberName,
         assignedCourseIds: selectedCourseIds,
         groupIds: selectedGroupIds,
         role: selectedRole,
-        status: nextStatus,
+        status: selectedMember.status,
         updatedAt: serverTimestamp(),
       });
 
@@ -454,10 +565,11 @@ export default function Members() {
           member.id === selectedMember.id
             ? {
                 ...member,
+                name: selectedMemberName,
                 assignedCourseIds: selectedCourseIds,
                 groupIds: selectedGroupIds,
                 role: selectedRole,
-                status: nextStatus,
+                status: selectedMember.status,
               }
             : member
         )
@@ -467,28 +579,16 @@ export default function Members() {
         prev
           ? {
               ...prev,
+              name: selectedMemberName,
               assignedCourseIds: selectedCourseIds,
               groupIds: selectedGroupIds,
               role: selectedRole,
-              status: nextStatus,
+              status: selectedMember.status,
             }
           : prev
       );
-      if (selectedMember.email && (addedCourseIds.length > 0 || removedCourseIds.length > 0)) {
-        await syncCourseInvitationsForMember(selectedMember, addedCourseIds, removedCourseIds);
-      }
 
-      setInitialCourseIds(selectedCourseIds);
-
-      if (!selectedMember.email && addedCourseIds.length > 0) {
-        setSnackbar({
-          open: true,
-          message: 'Mitglied aktualisiert. Hinweis: Ohne E-Mail können keine Einladungen verschickt werden.',
-          severity: 'info',
-        });
-      } else {
-        setSnackbar({ open: true, message: 'Mitglied wurde aktualisiert.', severity: 'success' });
-      }
+      setSnackbar({ open: true, message: 'Mitglied wurde aktualisiert.', severity: 'success' });
     } catch (error) {
       console.error('Zuordnungen konnten nicht gespeichert werden', error);
       setSnackbar({ open: true, message: 'Zuordnungen konnten nicht gespeichert werden.', severity: 'error' });
@@ -497,21 +597,108 @@ export default function Members() {
     }
   };
 
+  const handleSendCourseInvitation = async (courseId: string) => {
+    if (!currentUser || !selectedMember) return;
+    
+    try {
+      const course = courses.find((c) => c.id === courseId);
+      const normalizedEmail = selectedMember.email.trim().toLowerCase();
+      
+      const invitationRef = doc(
+        db,
+        'courseInvitations',
+        buildInvitationId(normalizedEmail, courseId, currentUser.uid)
+      );
+      
+      await setDoc(
+        invitationRef,
+        {
+          inviteeEmail: normalizedEmail,
+          memberId: selectedMember.id,
+          ownerId: currentUser.uid,
+          ownerEmail: currentUser.email ?? null,
+          ownerName: currentUser.displayName ?? null,
+          courseId,
+          courseTitle: course?.title ?? 'Kurs',
+          courseDescription: course?.description ?? '',
+          coverImageUrl: course?.coverImageUrl ?? null,
+          coverColor: course?.coverColor ?? null,
+          chapterCount: course?.chapters ?? 0,
+          lessonCount: course?.lessons ?? 0,
+          status: 'pending',
+          createdAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      // Update courseInvitations in member document
+      const updatedInvitations = [...(selectedMember.courseInvitations ?? [])];
+      const existingIndex = updatedInvitations.findIndex((inv) => inv.courseId === courseId);
+      
+      if (existingIndex >= 0) {
+        updatedInvitations[existingIndex] = {
+          courseId,
+          status: 'invited',
+          invitedAt: new Date(),
+        };
+      } else {
+        updatedInvitations.push({
+          courseId,
+          status: 'invited',
+          invitedAt: new Date(),
+        });
+      }
+
+      const memberRef = doc(db, 'users', currentUser.uid, 'members', selectedMember.id);
+      await updateDoc(memberRef, {
+        courseInvitations: updatedInvitations,
+        updatedAt: serverTimestamp(),
+      });
+
+      setMembers((prev) =>
+        prev.map((m) =>
+          m.id === selectedMember.id
+            ? { ...m, courseInvitations: updatedInvitations }
+            : m
+        )
+      );
+
+      setSelectedMember((prev) =>
+        prev ? { ...prev, courseInvitations: updatedInvitations } : prev
+      );
+
+      setSnackbar({ open: true, message: 'Einladung wurde versendet.', severity: 'success' });
+    } catch (error) {
+      console.error('Einladung konnte nicht versendet werden', error);
+      setSnackbar({ open: true, message: 'Einladung konnte nicht versendet werden.', severity: 'error' });
+    }
+  };
+
+  const isValidEmail = (email: string): boolean => {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email.trim());
+  };
+
   const handleCreateMember = async () => {
     if (!currentUser) return;
-    if (!newMember.name && !newMember.email) {
-      setSnackbar({ open: true, message: 'Name oder E-Mail ist erforderlich.', severity: 'error' });
+    if (!newMember.name || !newMember.email) {
+      setSnackbar({ open: true, message: 'Name und E-Mail sind erforderlich.', severity: 'error' });
+      return;
+    }
+    if (!isValidEmail(newMember.email)) {
+      setSnackbar({ open: true, message: 'Bitte geben Sie eine gültige E-Mail-Adresse ein.', severity: 'error' });
       return;
     }
     setAddMemberLoading(true);
     try {
       const payload = {
-        name: newMember.name || newMember.email,
+        name: newMember.name,
         email: newMember.email,
         role: newMember.role,
-        status: 'inactive' as MemberStatus,
+        status: 'active' as MemberStatus,
         groupIds: [],
         assignedCourseIds: [],
+        courseInvitations: [],
         loginCount: 0,
         createdAt: serverTimestamp(),
       };
@@ -525,6 +712,7 @@ export default function Members() {
           status: payload.status,
           groupIds: [],
           assignedCourseIds: [],
+          courseInvitations: [],
           loginCount: 0,
           createdAt: new Date(),
         },
@@ -532,7 +720,7 @@ export default function Members() {
       ]);
       setAddMemberOpen(false);
       setNewMember({ name: '', email: '', role: 'member' });
-      setSnackbar({ open: true, message: 'Mitglied eingeladen.', severity: 'success' });
+      setSnackbar({ open: true, message: 'Mitglied hinzugefügt.', severity: 'success' });
     } catch (error) {
       console.error('Mitglied konnte nicht angelegt werden', error);
       setSnackbar({ open: true, message: 'Mitglied konnte nicht angelegt werden.', severity: 'error' });
@@ -659,6 +847,25 @@ export default function Members() {
     }
 
     await Promise.all(operations);
+
+    // Update courseInvitations in member document
+    const updatedInvitations = [...(member.courseInvitations ?? [])];
+    
+    for (const courseId of removedCourseIds) {
+      const index = updatedInvitations.findIndex((inv) => inv.courseId === courseId);
+      if (index >= 0) {
+        updatedInvitations[index] = {
+          ...updatedInvitations[index],
+          status: 'not-invited',
+        };
+      }
+    }
+
+    const memberRef = doc(db, 'users', currentUser.uid, 'members', member.id);
+    await updateDoc(memberRef, {
+      courseInvitations: updatedInvitations,
+      updatedAt: serverTimestamp(),
+    });
   };
 
   const revokeAllInvitationsForMember = async (member: Member) => {
@@ -710,6 +917,85 @@ export default function Members() {
   const handleConfirmExport = () => {
     handleExportCsv();
     setConfirmExportOpen(false);
+  };
+
+  const handleGroupMenuOpen = (event: React.MouseEvent<HTMLElement>, group: MemberGroup) => {
+    event.stopPropagation();
+    setGroupMenuAnchorEl(event.currentTarget);
+    setSelectedGroupForMenu(group);
+  };
+
+  const handleGroupMenuClose = () => {
+    setGroupMenuAnchorEl(null);
+    setSelectedGroupForMenu(null);
+  };
+
+  const handleDeleteGroupRequest = (group: MemberGroup) => {
+    setGroupToDelete(group);
+    handleGroupMenuClose();
+  };
+
+  const handleDeleteGroupConfirm = async () => {
+    if (!currentUser || !groupToDelete) return;
+    setDeleteGroupLoading(true);
+    try {
+      // Entferne Gruppe aus allen Mitgliedern
+      const membersInGroup = members.filter((member) => member.groupIds.includes(groupToDelete.id));
+      for (const member of membersInGroup) {
+        const updatedGroupIds = member.groupIds.filter((id) => id !== groupToDelete.id);
+        const memberRef = doc(db, 'users', currentUser.uid, 'members', member.id);
+        await updateDoc(memberRef, {
+          groupIds: updatedGroupIds,
+          updatedAt: serverTimestamp(),
+        });
+      }
+
+      // Lösche Gruppe
+      await deleteDoc(doc(db, 'users', currentUser.uid, 'memberGroups', groupToDelete.id));
+      setGroups((prev) => prev.filter((group) => group.id !== groupToDelete.id));
+
+      // Aktualisiere lokale Member-Liste
+      setMembers((prev) =>
+        prev.map((member) => ({
+          ...member,
+          groupIds: member.groupIds.filter((id) => id !== groupToDelete.id),
+        }))
+      );
+
+      if (selectedGroup?.id === groupToDelete.id) {
+        handleGroupDrawerClose();
+      }
+
+      setSnackbar({ open: true, message: 'Gruppe wurde gelöscht.', severity: 'success' });
+    } catch (error) {
+      console.error('Gruppe konnte nicht gelöscht werden', error);
+      setSnackbar({ open: true, message: 'Gruppe konnte nicht gelöscht werden.', severity: 'error' });
+    } finally {
+      setDeleteGroupLoading(false);
+      setGroupToDelete(null);
+    }
+  };
+
+  const handleDuplicateGroup = async (group: MemberGroup) => {
+    if (!currentUser) return;
+    handleGroupMenuClose();
+    try {
+      const payload = {
+        name: `${group.name} (Kopie)`,
+        description: group.description ?? '',
+        assignedCourseIds: [...group.assignedCourseIds],
+        createdAt: serverTimestamp(),
+      };
+      const docRef = await addDoc(collection(db, 'users', currentUser.uid, 'memberGroups'), payload);
+      setGroups((prev) => [
+        { id: docRef.id, name: payload.name, description: payload.description, assignedCourseIds: payload.assignedCourseIds, createdAt: new Date() },
+        ...prev,
+      ]);
+      setSnackbar({ open: true, message: 'Gruppe wurde dupliziert.', severity: 'success' });
+    } catch (error) {
+      console.error('Gruppe konnte nicht dupliziert werden', error);
+      setSnackbar({ open: true, message: 'Gruppe konnte nicht dupliziert werden.', severity: 'error' });
+    }
   };
 
   if (!currentUser) {
@@ -858,7 +1144,7 @@ export default function Members() {
                             Keine Gruppen
                           </Typography>
                         )}
-                        {member.groupIds.map((groupId) => (
+                        {member.groupIds.slice(0, 2).map((groupId) => (
                           <Chip
                             key={groupId}
                             label={groupLookup.get(groupId)?.name ?? 'Unbekannt'}
@@ -866,6 +1152,14 @@ export default function Members() {
                             variant="outlined"
                           />
                         ))}
+                        {member.groupIds.length > 2 && (
+                          <Chip
+                            label={`+${member.groupIds.length - 2} weitere`}
+                            size="small"
+                            variant="outlined"
+                            color="primary"
+                          />
+                        )}
                       </Stack>
                     </TableCell>
                     <TableCell>
@@ -896,10 +1190,65 @@ export default function Members() {
                 Segmentiere Mitglieder nach Team, Kunde oder Lernpfad.
               </Typography>
             </Box>
-            <Button variant="contained" startIcon={<GroupsIcon />} onClick={() => setAddGroupOpen(true)}>
-              Gruppe anlegen
-            </Button>
+            <Stack direction="row" spacing={1}>
+              <Tooltip title="Sortieren">
+                <IconButton
+                  color={groupSortOption === 'date-desc' ? 'inherit' : 'primary'}
+                  onClick={(event) => setGroupFilterAnchorEl(event.currentTarget)}
+                  aria-controls={groupFilterAnchorEl ? 'group-filter-menu' : undefined}
+                  aria-haspopup="true"
+                >
+                  <FilterListIcon />
+                </IconButton>
+              </Tooltip>
+              {selectionMode ? (
+                <>
+                  <Button
+                    variant="outlined"
+                    onClick={toggleSelectionMode}
+                  >
+                    Abbrechen
+                  </Button>
+                  <Button
+                    variant="contained"
+                    color="error"
+                    startIcon={<DeleteOutlineIcon />}
+                    onClick={handleDeleteSelectedGroups}
+                    disabled={selectedGroupsForDeletion.size === 0 || deleteMultipleGroupsLoading}
+                  >
+                    {deleteMultipleGroupsLoading ? 'Löscht...' : `Löschen (${selectedGroupsForDeletion.size})`}
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Button
+                    variant="outlined"
+                    onClick={toggleSelectionMode}
+                  >
+                    Auswählen
+                  </Button>
+                  <Button variant="contained" startIcon={<GroupsIcon />} onClick={() => setAddGroupOpen(true)}>
+                    Gruppe anlegen
+                  </Button>
+                </>
+              )}
+            </Stack>
           </Stack>
+          <Menu
+            id="group-filter-menu"
+            anchorEl={groupFilterAnchorEl}
+            open={Boolean(groupFilterAnchorEl)}
+            onClose={handleGroupFilterMenuClose}
+            anchorOrigin={{ horizontal: 'right', vertical: 'bottom' }}
+            transformOrigin={{ horizontal: 'right', vertical: 'top' }}
+          >
+            <MenuItem selected={groupSortOption === 'name-asc'} onClick={() => handleGroupSortChange('name-asc')}>
+              Name (A–Z)
+            </MenuItem>
+            <MenuItem selected={groupSortOption === 'date-desc'} onClick={() => handleGroupSortChange('date-desc')}>
+              Neueste zuerst
+            </MenuItem>
+          </Menu>
           <Divider sx={{ my: 3 }} />
           {loadingGroups ? (
             <Stack alignItems="center" justifyContent="center" sx={{ py: 6 }}>
@@ -934,37 +1283,68 @@ export default function Members() {
             </Alert>
           ) : (
             <Stack spacing={2}>
-              {groups.map((group) => {
+              {filteredGroups.map((group) => {
                 const membersInGroup = members.filter((member) => member.groupIds.includes(group.id));
+                const isSelected = selectedGroupsForDeletion.has(group.id);
                 return (
                   <Paper 
                     key={group.id} 
                     variant="outlined" 
-                    sx={{ p: 2, cursor: 'pointer', '&:hover': { bgcolor: 'action.hover' } }}
-                    onClick={() => handleSelectGroup(group)}
+                    sx={{ 
+                      p: 2, 
+                      cursor: selectionMode ? 'pointer' : 'default',
+                      '&:hover': { bgcolor: 'action.hover' },
+                      ...(isSelected && { border: 2, borderColor: 'primary.main' })
+                    }}
+                    onClick={() => selectionMode && toggleGroupSelection(group.id)}
                   >
                     <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} justifyContent="space-between" alignItems={{ xs: 'flex-start', md: 'center' }}>
-                      <Box>
-                        <Typography fontWeight={600}>{group.name}</Typography>
-                        {group.description && (
-                          <Typography variant="body2" color="text.secondary">{group.description}</Typography>
+                      <Stack direction="row" spacing={2} alignItems="center" sx={{ flexGrow: 1 }}>
+                        {selectionMode && (
+                          <Checkbox
+                            checked={isSelected}
+                            onChange={() => toggleGroupSelection(group.id)}
+                            onClick={(e) => e.stopPropagation()}
+                          />
                         )}
-                        <Stack direction="row" spacing={2} mt={1}>
-                          <Chip 
-                            icon={<GroupsIcon fontSize="small" />}
-                            label={`${membersInGroup.length} Mitglied${membersInGroup.length !== 1 ? 'er' : ''}`} 
-                            size="small" 
-                            variant="outlined"
-                          />
-                          <Chip 
-                            icon={<SchoolIcon fontSize="small" />}
-                            label={`${group.assignedCourseIds.length} Kurs${group.assignedCourseIds.length !== 1 ? 'e' : ''}`} 
-                            size="small" 
-                            color="primary"
-                            variant="outlined"
-                          />
-                        </Stack>
-                      </Box>
+                        <Box 
+                          sx={{ flexGrow: 1, cursor: selectionMode ? 'pointer' : 'pointer' }} 
+                          onClick={(e) => {
+                            if (!selectionMode) {
+                              e.stopPropagation();
+                              handleSelectGroup(group);
+                            }
+                          }}
+                        >
+                          <Typography fontWeight={600}>{group.name}</Typography>
+                          {group.description && (
+                            <Typography variant="body2" color="text.secondary">{group.description}</Typography>
+                          )}
+                          <Stack direction="row" spacing={2} mt={1}>
+                            <Chip 
+                              icon={<GroupsIcon fontSize="small" />}
+                              label={`${membersInGroup.length} Mitglied${membersInGroup.length !== 1 ? 'er' : ''}`} 
+                              size="small" 
+                              variant="outlined"
+                            />
+                            <Chip 
+                              icon={<SchoolIcon fontSize="small" />}
+                              label={`${group.assignedCourseIds.length} Kurs${group.assignedCourseIds.length !== 1 ? 'e' : ''}`} 
+                              size="small" 
+                              color="primary"
+                              variant="outlined"
+                            />
+                          </Stack>
+                        </Box>
+                      </Stack>
+                      {!selectionMode && (
+                        <IconButton
+                          onClick={(e) => handleGroupMenuOpen(e, group)}
+                          size="small"
+                        >
+                          <MoreVertIcon />
+                        </IconButton>
+                      )}
                     </Stack>
                   </Paper>
                 );
@@ -982,7 +1362,8 @@ export default function Members() {
               label="Name"
               value={newMember.name}
               onChange={(event) => setNewMember((prev) => ({ ...prev, name: event.target.value }))}
-              placeholder="z. B. PlanVision 3D"
+              placeholder="Kontaktname"
+              required
               fullWidth
             />
             <TextField
@@ -991,6 +1372,7 @@ export default function Members() {
               value={newMember.email}
               onChange={(event) => setNewMember((prev) => ({ ...prev, email: event.target.value }))}
               placeholder="kontakt@example.com"
+              required
               fullWidth
             />
             <TextField
@@ -1010,7 +1392,7 @@ export default function Members() {
         <DialogActions>
           <Button onClick={() => setAddMemberOpen(false)}>Abbrechen</Button>
           <Button onClick={handleCreateMember} variant="contained" disabled={addMemberLoading}>
-            {addMemberLoading ? 'Speichert...' : 'Einladen'}
+            {addMemberLoading ? 'Speichert...' : 'Hinzufügen'}
           </Button>
         </DialogActions>
       </Dialog>
@@ -1088,21 +1470,36 @@ export default function Members() {
           <Stack spacing={3} height="100%">
             <Stack direction="row" justifyContent="space-between" alignItems="center">
               <Typography variant="h6" fontWeight={700}>
-                {selectedMember.name}
+                Mitgliedsdetails
               </Typography>
               <IconButton onClick={handleDrawerClose}>
                 <CloseIcon />
               </IconButton>
             </Stack>
+            <TextField
+              label="Name"
+              value={selectedMemberName}
+              onChange={(event) => setSelectedMemberName(event.target.value)}
+              fullWidth
+            />
             <Box>
               <Typography variant="body2" color="text.secondary">
                 {selectedMember.email || 'Keine E-Mail hinterlegt'}
               </Typography>
-              <Stack direction="row" spacing={1} mt={1}>
-                <Chip size="small" color={statusConfig[selectedMember.status].color} label={statusConfig[selectedMember.status].label} />
-                <Chip size="small" label={roleOptions.find((role) => role.value === selectedRole)?.label} />
-              </Stack>
             </Box>
+            <TextField
+              label="Globaler Status"
+              select
+              value={selectedMember.status}
+              onChange={(event) => {
+                const newStatus = event.target.value as MemberStatus;
+                setSelectedMember((prev) => prev ? { ...prev, status: newStatus } : prev);
+              }}
+              fullWidth
+            >
+              <MenuItem value="active">Aktiv</MenuItem>
+              <MenuItem value="inactive">Inaktiv</MenuItem>
+            </TextField>
             <TextField
               label="Rolle"
               select
@@ -1125,7 +1522,7 @@ export default function Members() {
             />
             <Box>
               <Typography variant="subtitle1" fontWeight={600} gutterBottom>
-                Kurse einladen
+                Kurse zuordnen
               </Typography>
               {loadingCourses ? (
                 <Stack alignItems="center" justifyContent="center" sx={{ py: 3 }}>
@@ -1160,25 +1557,52 @@ export default function Members() {
                 </Alert>
               ) : (
                 <List sx={{ maxHeight: 280, overflow: 'auto' }}>
-                  {courses.map((course) => (
-                    <ListItem key={course.id} disableGutters>
-                      <ListItemAvatar>
-                        <Avatar>
-                          <SchoolIcon />
-                        </Avatar>
-                      </ListItemAvatar>
-                      <ListItemText
-                        primary={course.title}
-                        secondary={`${course.lessons ?? 0} Lektionen`}
-                      />
-                      <Chip
-                        label={selectedCourseIds.includes(course.id) ? 'Zugeordnet' : 'Verfügbar'}
-                        color={selectedCourseIds.includes(course.id) ? 'primary' : 'default'}
-                        size="small"
-                        onClick={() => toggleCourseSelection(course.id)}
-                      />
-                    </ListItem>
-                  ))}
+                  {courses.map((course) => {
+                    const courseInvitation = selectedMember.courseInvitations?.find((inv) => inv.courseId === course.id);
+                    const invitationStatus = courseInvitation?.status ?? 'not-invited';
+                    const isAssigned = selectedCourseIds.includes(course.id);
+                    
+                    return (
+                      <ListItem key={course.id} disableGutters>
+                        <ListItemAvatar>
+                          <Avatar>
+                            <SchoolIcon />
+                          </Avatar>
+                        </ListItemAvatar>
+                        <ListItemText
+                          primary={course.title}
+                          secondary={
+                            <Stack direction="row" spacing={1} alignItems="center">
+                              <Typography variant="body2">{course.lessons ?? 0} Lektionen</Typography>
+                              <Chip
+                                label={courseInvitationStatusConfig[invitationStatus].label}
+                                color={courseInvitationStatusConfig[invitationStatus].color}
+                                size="small"
+                              />
+                            </Stack>
+                          }
+                        />
+                        <Stack spacing={0.5}>
+                          {isAssigned ? (
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              onClick={() => handleSendCourseInvitation(course.id)}
+                            >
+                              {invitationStatus === 'invited' ? 'Erneut einladen' : 'Einladen'}
+                            </Button>
+                          ) : (
+                            <Chip
+                              label="Verfügbar"
+                              color="default"
+                              size="small"
+                              onClick={() => toggleCourseSelection(course.id)}
+                            />
+                          )}
+                        </Stack>
+                      </ListItem>
+                    );
+                  })}
                 </List>
               )}
             </Box>
@@ -1349,6 +1773,17 @@ export default function Members() {
             <Box sx={{ mt: 'auto' }}>
               <Divider sx={{ mb: 2 }} />
               <Stack direction="row" spacing={1.5} justifyContent="flex-end" alignItems="center">
+                <Tooltip title="Gruppe löschen">
+                  <span>
+                    <IconButton
+                      color="error"
+                      onClick={() => selectedGroup && handleDeleteGroupRequest(selectedGroup)}
+                      disabled={deleteGroupLoading}
+                    >
+                      <DeleteOutlineIcon />
+                    </IconButton>
+                  </span>
+                </Tooltip>
                 <Tooltip title={groupDrawerSaving ? 'Speichert...' : 'Kurse speichern & Mitglieder einladen'}>
                   <span>
                     <IconButton color="primary" onClick={handleSaveGroupCourses} disabled={groupDrawerSaving}>
@@ -1361,6 +1796,47 @@ export default function Members() {
           </Stack>
         )}
       </Drawer>
+
+      <Menu
+        anchorEl={groupMenuAnchorEl}
+        open={Boolean(groupMenuAnchorEl)}
+        onClose={handleGroupMenuClose}
+        anchorOrigin={{ horizontal: 'right', vertical: 'bottom' }}
+        transformOrigin={{ horizontal: 'right', vertical: 'top' }}
+      >
+        <MenuItem onClick={() => selectedGroupForMenu && handleDuplicateGroup(selectedGroupForMenu)}>
+          <ListItemIcon>
+            <ContentCopyIcon fontSize="small" />
+          </ListItemIcon>
+          <ListItemText>Duplizieren</ListItemText>
+        </MenuItem>
+        <MenuItem onClick={() => selectedGroupForMenu && handleDeleteGroupRequest(selectedGroupForMenu)}>
+          <ListItemIcon>
+            <DeleteOutlineIcon fontSize="small" color="error" />
+          </ListItemIcon>
+          <ListItemText>Löschen</ListItemText>
+        </MenuItem>
+      </Menu>
+
+      <Dialog open={Boolean(groupToDelete)} onClose={() => setGroupToDelete(null)}>
+        <DialogTitle>Gruppe löschen</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            Möchtest du die Gruppe "{groupToDelete?.name}" dauerhaft entfernen? Die Gruppe wird bei allen Mitgliedern entfernt, aber die Mitglieder selbst bleiben erhalten.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setGroupToDelete(null)}>Abbrechen</Button>
+          <Button
+            color="error"
+            variant="contained"
+            onClick={handleDeleteGroupConfirm}
+            disabled={deleteGroupLoading}
+          >
+            {deleteGroupLoading ? 'Löscht...' : 'Löschen'}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <Snackbar
         open={snackbar.open}
