@@ -81,7 +81,7 @@ import NatureIcon from '@mui/icons-material/Nature';
 import CourseCard from '../components/CourseCard';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import { auth, db } from '../firebase/firebaseConfig';
-import { collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, query, setDoc, writeBatch } from 'firebase/firestore';
+import { collection, deleteDoc, doc, getDocs, onSnapshot, query, setDoc, writeBatch } from 'firebase/firestore';
 
 type IconOption = {
   label: string;
