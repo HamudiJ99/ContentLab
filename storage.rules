@@ -46,5 +46,17 @@ service firebase.storage {
       // Löschen: Nur der Besitzer
       allow delete: if isOwner(userId);
     }
+    
+    // Kurs-Cover-Bilder
+    match /courseCovers/{userId}/{courseId} {
+      // Lesen: Jeder eingeloggte Nutzer
+      allow read: if isSignedIn();
+      
+      // Schreiben: Nur der Besitzer und Datei maximal 10 MB
+      allow write: if isOwner(userId) && request.resource.size <= 10 * 1024 * 1024;
+      
+      // Löschen: Nur der Besitzer
+      allow delete: if isOwner(userId);
+    }
   }
 }
