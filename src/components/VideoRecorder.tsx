@@ -9,7 +9,6 @@ import {
   DialogContent,
   DialogTitle,
   IconButton,
-  Slider,
   Stack,
   ToggleButton,
   ToggleButtonGroup,
@@ -25,11 +24,7 @@ import {
   Replay as ReplayIcon,
   Save as SaveIcon,
   Close as CloseIcon,
-  ContentCut as CutIcon,
 } from '@mui/icons-material';
-
-import { FFmpeg } from '@ffmpeg/ffmpeg';
-import { fetchFile } from '@ffmpeg/util';
 
 type RecordingMode = 'webcam' | 'screen' | 'both';
 type RecordingState =
@@ -52,14 +47,9 @@ export default function VideoRecorder({ onSave, onCancel }: VideoRecorderProps) 
   const [error, setError] = useState<string | null>(null);
 
   const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
-  const [trimStart, setTrimStart] = useState(0);
-  const [trimEnd, setTrimEnd] = useState(0);
   const [videoDuration, setVideoDuration] = useState(0);
 
   const [recordingDuration, setRecordingDuration] = useState(0);
-
-  const [isTrimming, setIsTrimming] = useState(false);
-  const [trimProgress, setTrimProgress] = useState<number>(0);
 
   const videoPreviewRef = useRef<HTMLVideoElement>(null);
   const screenStreamRef = useRef<MediaStream | null>(null);
@@ -74,10 +64,6 @@ export default function VideoRecorder({ onSave, onCancel }: VideoRecorderProps) 
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
-
-  // FFmpeg
-  const ffmpegRef = useRef<FFmpeg | null>(null);
-  const ffmpegReadyRef = useRef(false);
 
   useEffect(() => {
     return () => {
@@ -110,22 +96,6 @@ export default function VideoRecorder({ onSave, onCancel }: VideoRecorderProps) 
     return 'Screen + Webcam';
   };
 
-  const ensureFFmpeg = async () => {
-    if (ffmpegReadyRef.current && ffmpegRef.current) return ffmpegRef.current;
-
-    const ffmpeg = new FFmpeg();
-    ffmpeg.on('progress', ({ progress }) => {
-      // progress 0..1
-      setTrimProgress(Math.round((progress || 0) * 100));
-    });
-
-    // Lädt Core/Worker/WASM aus dem Package-Bundle (keine URLs nötig)
-    await ffmpeg.load();
-
-    ffmpegRef.current = ffmpeg;
-    ffmpegReadyRef.current = true;
-    return ffmpeg;
-  };
 
   /* ===================== RECORDING LOGIK ===================== */
 
@@ -221,15 +191,33 @@ export default function VideoRecorder({ onSave, onCancel }: VideoRecorderProps) 
         const blob = new Blob(chunksRef.current, { type: 'video/webm' });
 
         setRecordedBlob(blob);
-        setVideoDuration(recordingDuration);
-        setTrimStart(0);
-        setTrimEnd(recordingDuration);
-
-        if (videoPreviewRef.current) {
-          videoPreviewRef.current.srcObject = null;
-          videoPreviewRef.current.src = URL.createObjectURL(blob);
-          videoPreviewRef.current.load();
-        }
+        
+        // Erstelle Video-Element zum Auslesen der echten Dauer
+        const tempVideo = document.createElement('video');
+        tempVideo.preload = 'metadata';
+        tempVideo.src = URL.createObjectURL(blob);
+        
+        tempVideo.onloadedmetadata = () => {
+          let duration = tempVideo.duration;
+          
+          // Verhindere Infinity oder NaN
+          if (!isFinite(duration) || duration <= 0) {
+            console.warn('Invalid video duration:', duration, '- using recording time');
+            duration = recordingDuration > 0 ? recordingDuration : 60;
+          }
+          
+          console.log('VideoRecorder: Final duration:', duration);
+          setVideoDuration(duration);
+          
+          if (videoPreviewRef.current) {
+            videoPreviewRef.current.srcObject = null;
+            videoPreviewRef.current.src = tempVideo.src;
+            videoPreviewRef.current.load();
+          }
+          
+          // Cleanup
+          URL.revokeObjectURL(tempVideo.src);
+        };
 
         setState('reviewing');
         stopAllStreams();
@@ -281,8 +269,6 @@ export default function VideoRecorder({ onSave, onCancel }: VideoRecorderProps) 
     stopAllStreams();
     setRecordedBlob(null);
     setRecordingDuration(0);
-    setTrimStart(0);
-    setTrimEnd(0);
     setVideoDuration(0);
     setError(null);
     setState('idle');
@@ -293,87 +279,6 @@ export default function VideoRecorder({ onSave, onCancel }: VideoRecorderProps) 
     }
   };
 
-  const handleTrim = async () => {
-    if (!recordedBlob) return;
-
-    // Validierung
-    const start = Math.max(0, trimStart);
-    const end = Math.min(videoDuration || 0, trimEnd);
-
-    if (!isFinite(start) || !isFinite(end) || end <= start) {
-      setError('Ungültiger Schnittbereich. Bitte Start < Ende wählen.');
-      return;
-    }
-
-    setError(null);
-    setIsTrimming(true);
-    setTrimProgress(0);
-
-    try {
-      const ffmpeg = await ensureFFmpeg();
-
-      // Clean alte Dateien (best effort)
-      try {
-        await ffmpeg.deleteFile('input.webm');
-        await ffmpeg.deleteFile('output.webm');
-      } catch {
-        // ignore
-      }
-
-      await ffmpeg.writeFile('input.webm', await fetchFile(recordedBlob));
-
-      // Re-Encode (robust & “echtes Schneiden”)
-      // -ss/-to vor -i ist schneller, kann aber ungenauer sein.
-      // Für Genauigkeit: -ss/-to nach -i. Wir nutzen Genauigkeit.
-      await ffmpeg.exec([
-        '-i',
-        'input.webm',
-        '-ss',
-        String(start),
-        '-to',
-        String(end),
-        '-c:v',
-        'libvpx-vp9',
-        '-crf',
-        '32',
-        '-b:v',
-        '0',
-        '-c:a',
-        'libopus',
-        'output.webm',
-      ]);
-
-      const out = await ffmpeg.readFile('output.webm');
-
-      const data = out as Uint8Array;
-
-      // 🔥 ERZWINGT echten ArrayBuffer (kein SharedArrayBuffer)
-      const copiedBuffer = Uint8Array.from(data).buffer;
-
-      const trimmed = new Blob([copiedBuffer], { type: 'video/webm' });
-
-
-      setRecordedBlob(trimmed);
-
-      const newDuration = Math.max(0, end - start);
-      setVideoDuration(newDuration);
-      setTrimStart(0);
-      setTrimEnd(newDuration);
-
-      if (videoPreviewRef.current) {
-        videoPreviewRef.current.srcObject = null;
-        videoPreviewRef.current.src = URL.createObjectURL(trimmed);
-        videoPreviewRef.current.currentTime = 0;
-        videoPreviewRef.current.load();
-      }
-    } catch (e) {
-      console.error(e);
-      setError('Schneiden fehlgeschlagen. Bitte erneut versuchen.');
-    } finally {
-      setIsTrimming(false);
-      setTrimProgress(0);
-    }
-  };
 
   const handleSave = () => {
     if (!recordedBlob) return;
@@ -516,83 +421,6 @@ export default function VideoRecorder({ onSave, onCancel }: VideoRecorderProps) 
             )}
           </Card>
 
-          {/* Trimming */}
-          {state === 'reviewing' && recordedBlob && videoDuration > 0 && isFinite(videoDuration) && (
-            <Card sx={{ p: 3 }}>
-              <Stack spacing={3}>
-                <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
-                  <Stack direction="row" spacing={1} alignItems="center">
-                    <CutIcon fontSize="small" />
-                    <Typography fontWeight={600}>Video schneiden</Typography>
-                  </Stack>
-
-                  {isTrimming && (
-                    <Stack direction="row" spacing={1.5} alignItems="center">
-                      <CircularProgress size={18} />
-                      <Typography variant="caption" color="text.secondary">
-                        {trimProgress > 0 ? `${trimProgress}%` : 'Lädt…'}
-                      </Typography>
-                    </Stack>
-                  )}
-                </Stack>
-
-                <Box>
-                  <Typography variant="caption" color="text.secondary">
-                    Start: {formatTime(trimStart)}
-                  </Typography>
-                  <Slider
-                    value={trimStart}
-                    onChange={(_, v) => {
-                      const next = Number(v);
-                      // Start darf nicht >= Ende sein
-                      const safe = Math.min(next, Math.max(0, trimEnd - 0.1));
-                      setTrimStart(safe);
-                    }}
-                    min={0}
-                    max={videoDuration}
-                    step={0.1}
-                    valueLabelDisplay="auto"
-                    valueLabelFormat={(v) => formatTime(Number(v))}
-                    disabled={isTrimming}
-                  />
-                </Box>
-
-                <Box>
-                  <Typography variant="caption" color="text.secondary">
-                    Ende: {formatTime(trimEnd)}
-                  </Typography>
-                  <Slider
-                    value={trimEnd}
-                    onChange={(_, v) => {
-                      const next = Number(v);
-                      // Ende darf nicht <= Start sein
-                      const safe = Math.max(next, trimStart + 0.1);
-                      setTrimEnd(safe);
-                    }}
-                    min={0}
-                    max={videoDuration}
-                    step={0.1}
-                    valueLabelDisplay="auto"
-                    valueLabelFormat={(v) => formatTime(Number(v))}
-                    disabled={isTrimming}
-                  />
-                </Box>
-
-                <Button
-                  variant="outlined"
-                  startIcon={<CutIcon />}
-                  onClick={handleTrim}
-                  disabled={isTrimming || trimStart >= trimEnd}
-                >
-                  {isTrimming ? 'Schneide…' : 'Schnitt anwenden'}
-                </Button>
-
-                <Typography variant="caption" color="text.secondary">
-                  Hinweis: Das Schneiden kann beim ersten Mal länger dauern, da FFmpeg geladen wird.
-                </Typography>
-              </Stack>
-            </Card>
-          )}
         </Stack>
       </DialogContent>
 

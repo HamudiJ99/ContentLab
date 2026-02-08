@@ -1,79 +1,73 @@
-# React + TypeScript + Vite
+# ContentLab
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+ContentLab ist eine moderne Webanwendung zur Verwaltung, Erstellung und Bearbeitung von Online-Kursen und Lektionen. Sie richtet sich an Lehrende, Trainer und Teams, die digitale Lerninhalte kollaborativ gestalten möchten.
 
-Currently, two official plugins are available:
+## Features
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- **Kurs- und Lektionenverwaltung**: Erstellen, bearbeiten und organisieren von Kursen und Lektionen
+- **Rich Text Editor**: Formatierte Texte, Bilder und Medien mit Tiptap
+- **Video-Upload, -Bearbeitung und -Aufnahme**: Integration von FFmpeg und VideoRecorder
+- **PDF- und Dateiupload**
+- **Drag & Drop**: Sortieren von Lektionen und Kursinhalten mit DnD Kit
+- **Mitgliederverwaltung & Einladungen**: Einladen von Nutzern per E-Mail, automatisches Handling von Pending Invitations
+- **Firebase Integration**: Authentifizierung, Firestore, Storage, Hosting
+- **Material UI**: Modernes, responsives UI mit MUI und Emotion
+- **Dark/Light Mode**
 
-## React Compiler
+## Technologien
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- React, TypeScript, Vite
+- Firebase (Auth, Firestore, Storage, Hosting)
+- Material UI (MUI), Emotion
+- Tiptap (Rich Text Editor)
+- FFmpeg (Videoverarbeitung im Browser)
+- DnD Kit (Drag & Drop)
+- React Router DOM (Routing)
+- React Easy Crop (Bild-/Video-Zuschnitt)
+- UUID (ID-Generierung)
 
-## Expanding the ESLint configuration
+## Entwicklung
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+### Lokale Entwicklung
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+1. Repository klonen
+2. Abhängigkeiten installieren:
+   ```bash
+   npm install
+   ```
+3. Entwicklungsserver starten:
+   ```bash
+   npm run dev
+   ```
+4. App im Browser öffnen: [http://localhost:5173](http://localhost:5173)
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+### Deployment
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+1. Build erstellen:
+   ```bash
+   npm run build
+   ```
+2. Deployment zu Firebase Hosting:
+   ```bash
+   firebase deploy
+   ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## Firebase Setup
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+- Firestore und Storage Regeln sind in `firestore.rules` und `storage.rules` definiert
+- E-Mail-Einladungen werden über eine Firebase Function (z.B. mit SendGrid) versendet
+- Siehe `PENDING_INVITATIONS_SETUP.md` für Details zum Einladungssystem
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+## Ordnerstruktur (Auszug)
 
-Wenn du lokal weiterentwickelst:
+- `src/` – Quellcode (Komponenten, Seiten, Kontext, Firebase-Logik)
+- `public/` – Statische Dateien
+- `functions/` – Firebase Functions (z.B. E-Mail-Versand)
 
-.env ist gesetzt → npm run dev
-Browser auf http://localhost:5173 (oder den Port, den Vite loggt)
-Nach Änderungen erneut npm run build + firebase deploy für die Live-Site
+## Lizenz
+
+MIT License
+
+---
+
+Für weitere Informationen stehe ich jederzeit gerne zur Verfügung

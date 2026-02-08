@@ -30,6 +30,7 @@ import UploadFileIcon from '@mui/icons-material/UploadFile';
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import PlayCircleOutlineIcon from '@mui/icons-material/PlayCircleOutline';
 import VideocamIcon from '@mui/icons-material/Videocam';
+import ContentCutIcon from '@mui/icons-material/ContentCut';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import {
   collection,
@@ -46,6 +47,7 @@ import { auth, db, storage } from '../firebase/firebaseConfig';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import RichTextEditor from '../components/RichTextEditor';
 import VideoRecorder from '../components/VideoRecorder';
+import VideoEditor from '../components/VideoEditor';
 import { useNavigation } from '../context/NavigationContext';
 
 const getStatusStyles = (brandColor: string) => ({
@@ -138,6 +140,7 @@ const LessonEditor = () => {
   const [uploadingVideo, setUploadingVideo] = useState(false);
   const [videoUploadMode, setVideoUploadMode] = useState<'upload' | 'record'>('upload');
   const [showVideoRecorder, setShowVideoRecorder] = useState(false);
+  const [showVideoEditor, setShowVideoEditor] = useState(false);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
   const [blockedNavigation, setBlockedNavigation] = useState<(() => void) | null>(null);
@@ -598,6 +601,40 @@ const LessonEditor = () => {
     }
   };
 
+  const handleEditedVideo = async (videoBlob: Blob, duration: number) => {
+    if (!currentUser || !courseId || !chapterId || !lessonId) {
+      return;
+    }
+    
+    setUploadingVideo(true);
+    setShowVideoEditor(false);
+    setPageError(null);
+    
+    try {
+      const storageRef = ref(storage, `users/${currentUser.uid}/courses/${courseId}/lessons/${lessonId}/lesson.webm`);
+      await uploadBytes(storageRef, videoBlob);
+      const downloadUrl = await getDownloadURL(storageRef);
+      setVideoUrl(downloadUrl);
+      
+      const roundedDuration = Math.round(duration);
+      
+      if (lessonRef) {
+        await updateDoc(lessonRef, { 
+          videoUrl: downloadUrl,
+          videoDuration: roundedDuration
+        });
+      }
+      
+      await updateCourseDuration();
+      setPageError(null);
+    } catch (error) {
+      console.error('Video update failed:', error);
+      setPageError('Video konnte nicht aktualisiert werden.');
+    } finally {
+      setUploadingVideo(false);
+    }
+  };
+
   const handleSaveLesson = async () => {
     if (!lessonRef) {
       return;
@@ -1031,6 +1068,15 @@ const LessonEditor = () => {
                     </Typography>
                     <Button
                       variant="outlined"
+                      size="small"
+                      startIcon={<ContentCutIcon />}
+                      onClick={() => setShowVideoEditor(true)}
+                      disabled={uploadingVideo}
+                    >
+                      Video bearbeiten
+                    </Button>
+                    <Button
+                      variant="outlined"
                       color="error"
                       size="small"
                       onClick={handleRemoveVideo}
@@ -1271,6 +1317,15 @@ const LessonEditor = () => {
         <VideoRecorder
           onSave={handleRecordedVideo}
           onCancel={() => setShowVideoRecorder(false)}
+        />
+      )}
+
+      {/* Video Editor Dialog */}
+      {showVideoEditor && videoUrl && (
+        <VideoEditor
+          videoUrl={videoUrl}
+          onSave={handleEditedVideo}
+          onCancel={() => setShowVideoEditor(false)}
         />
       )}
     </Box>
