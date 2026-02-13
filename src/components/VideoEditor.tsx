@@ -6,12 +6,15 @@ import {
   Button,
   CircularProgress,
   Dialog,
+  DialogActions,
   DialogContent,
+  DialogContentText,
   DialogTitle,
   IconButton,
   Slider,
   Stack,
   Typography,
+  useTheme,
 } from '@mui/material';
 import {
   Close as CloseIcon,
@@ -36,6 +39,9 @@ type VideoEditorProps = {
 };
 
 export default function VideoEditor({ videoUrl, onSave, onCancel }: VideoEditorProps) {
+  const theme = useTheme();
+  const isDark = theme.palette.mode === 'dark';
+  
   // State
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -50,6 +56,9 @@ export default function VideoEditor({ videoUrl, onSave, onCancel }: VideoEditorP
   const [isMuted, setIsMuted] = useState(false);
   const [volume, setVolume] = useState(0.9);
   const [playbackRate, setPlaybackRate] = useState(1);
+  const [hasPendingCut, setHasPendingCut] = useState(false);
+  const [showCutWarning, setShowCutWarning] = useState(false);
+  const [showCloseWarning, setShowCloseWarning] = useState(false);
 
   // Refs
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -339,6 +348,7 @@ export default function VideoEditor({ videoUrl, onSave, onCancel }: VideoEditorP
 
       setTrimmedBlob(trimmedVideoBlob);
       setTrimProgress(100);
+      setHasPendingCut(false); // Cut wurde angewendet
 
       // Vorschau aktualisieren
       const trimmedUrl = URL.createObjectURL(trimmedVideoBlob);
@@ -356,6 +366,12 @@ export default function VideoEditor({ videoUrl, onSave, onCancel }: VideoEditorP
 
   // Speichern
   const handleSave = useCallback(() => {
+    // Warnung anzeigen, wenn ein Schnitt vorbereitet aber nicht angewendet wurde
+    if (hasPendingCut && !trimmedBlob) {
+      setShowCutWarning(true);
+      return;
+    }
+    
     if (trimmedBlob) {
       onSave(trimmedBlob, trimmedDuration);
     } else {
@@ -363,39 +379,77 @@ export default function VideoEditor({ videoUrl, onSave, onCancel }: VideoEditorP
         .then(res => res.blob())
         .then(blob => onSave(blob, duration));
     }
-  }, [trimmedBlob, trimmedDuration, videoBlobUrl, duration, onSave]);
+  }, [trimmedBlob, trimmedDuration, videoBlobUrl, duration, onSave, hasPendingCut]);
+
+  // Speichern ohne Schnitt bestätigen
+  const handleSaveWithoutCut = useCallback(() => {
+    setShowCutWarning(false);
+    fetch(videoBlobUrl!)
+      .then(res => res.blob())
+      .then(blob => onSave(blob, duration));
+  }, [videoBlobUrl, duration, onSave]);
+
+  // Schließen mit Warnung wenn Schnitt angewendet aber nicht gespeichert
+  const handleClose = useCallback(() => {
+    if (trimmedBlob) {
+      setShowCloseWarning(true);
+    } else {
+      onCancel();
+    }
+  }, [trimmedBlob, onCancel]);
+
+  // Schließen ohne Speichern bestätigen
+  const handleCloseWithoutSave = useCallback(() => {
+    setShowCloseWarning(false);
+    onCancel();
+  }, [onCancel]);
 
   // Current position als Prozent
   const currentPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
 
   return (
-    <Dialog open fullScreen onClose={onCancel}>
-      <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <Stack direction="row" spacing={1} alignItems="center">
-          <CutIcon />
-          <Typography variant="h6">Video bearbeiten</Typography>
+    <Dialog open fullScreen onClose={handleClose}>
+      <DialogTitle sx={{ 
+        display: 'flex', 
+        alignItems: 'center', 
+        justifyContent: 'space-between',
+        borderBottom: '1px solid',
+        borderColor: 'divider',
+        py: 1.5,
+      }}>
+        <Stack direction="row" spacing={1.5} alignItems="center">
+          <CutIcon color="primary" />
+          <Typography variant="h6" fontWeight={600}>Video bearbeiten</Typography>
         </Stack>
-        <IconButton onClick={onCancel}>
+        <IconButton onClick={handleClose} size="small">
           <CloseIcon />
         </IconButton>
       </DialogTitle>
 
-      <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 3, p: 3 }}>
-        {error && <Alert severity="error" onClose={() => setError(null)}>{error}</Alert>}
+      <DialogContent sx={{ 
+        display: 'flex', 
+        flexDirection: 'column', 
+        p: 0,
+        bgcolor: isDark ? '#0a0a0a' : '#f5f5f5',
+      }}>
+        {error && (
+          <Alert severity="error" onClose={() => setError(null)} sx={{ m: 2 }}>
+            {error}
+          </Alert>
+        )}
 
-        {/* Video Player */}
+        {/* Video Player - Clean, ohne Overlays */}
         <Box
           sx={{
             flex: 1,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            bgcolor: 'black',
-            borderRadius: 2,
-            overflow: 'hidden',
             position: 'relative',
-            minHeight: 400,
+            minHeight: 300,
+            cursor: 'pointer',
           }}
+          onClick={togglePlay}
         >
           <video
             ref={videoRef}
@@ -409,7 +463,6 @@ export default function VideoEditor({ videoUrl, onSave, onCancel }: VideoEditorP
               objectFit: 'contain',
               opacity: isLoading ? 0 : 1,
             }}
-            onClick={togglePlay}
           />
 
           {isLoading && (
@@ -423,254 +476,369 @@ export default function VideoEditor({ videoUrl, onSave, onCancel }: VideoEditorP
             </Stack>
           )}
 
-          {/* Play/Pause Overlay */}
-          {!isLoading && (
-            <IconButton
-              onClick={togglePlay}
+          {/* Zentraler Play-Button beim Pausieren */}
+          {!isLoading && !isPlaying && (
+            <Box
               sx={{
                 position: 'absolute',
-                bottom: 16,
-                left: 16,
-                bgcolor: 'rgba(0,0,0,0.6)',
-                color: 'white',
-                '&:hover': { bgcolor: 'rgba(0,0,0,0.8)' },
+                inset: 0,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                bgcolor: 'rgba(0,0,0,0.3)',
+                transition: 'opacity 0.2s',
+                '&:hover': { bgcolor: 'rgba(0,0,0,0.4)' },
               }}
             >
-              {isPlaying ? <PauseIcon /> : <PlayIcon />}
-            </IconButton>
-          )}
-
-          {/* Zeit-Anzeige */}
-          {!isLoading && (
-            <Typography
-              sx={{
-                position: 'absolute',
-                bottom: 16,
-                right: 16,
-                bgcolor: 'rgba(0,0,0,0.6)',
-                color: 'white',
-                px: 1.5,
-                py: 0.5,
-                borderRadius: 1,
-                fontSize: '0.875rem',
-              }}
-            >
-              {formatTime(currentTime)} / {formatTime(duration)}
-            </Typography>
+              <Box
+                sx={{
+                  width: 72,
+                  height: 72,
+                  borderRadius: '50%',
+                  bgcolor: 'rgba(255,255,255,0.9)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  boxShadow: '0 4px 20px rgba(0,0,0,0.3)',
+                }}
+              >
+                <PlayIcon sx={{ fontSize: 40, color: '#0a0a0a', ml: 0.5 }} />
+              </Box>
+            </Box>
           )}
         </Box>
 
-        {/* Controls Bar */}
+        {/* Kompakte Control-Leiste */}
         {!isLoading && (
-          <Card
-            sx={{
-              p: 2,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 2,
-              flexWrap: 'wrap',
-              bgcolor: 'background.paper',
-              border: '1px solid',
-              borderColor: 'divider',
-            }}
-          >
-            <Stack direction="row" spacing={1} alignItems="center">
-              <IconButton onClick={() => seekBy(-5)}>
-                <Replay5Icon />
-              </IconButton>
-              <IconButton onClick={togglePlay}>
-                {isPlaying ? <PauseIcon /> : <PlayIcon />}
-              </IconButton>
-              <IconButton onClick={() => seekBy(5)}>
-                <Forward5Icon />
-              </IconButton>
-            </Stack>
-
-            <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 200 }}>
-              <IconButton onClick={toggleMute}>
-                {isMuted || volume === 0 ? <VolumeOffIcon /> : <VolumeUpIcon />}
-              </IconButton>
-              <Slider
-                size="small"
-                value={Math.round(volume * 100)}
-                onChange={(_, v) => {
-                  const next = Math.max(0, Math.min(100, Number(v)));
-                  setVolume(next / 100);
-                  if (next > 0) setIsMuted(false);
-                }}
-                min={0}
-                max={100}
-                sx={{ width: 140 }}
-              />
-            </Stack>
-
-            <Button variant="outlined" size="small" onClick={cyclePlaybackRate}>
-              {playbackRate}x
-            </Button>
-
-            <Box sx={{ flexGrow: 1 }} />
-
-            <Typography variant="body2" color="text.secondary">
-              {formatTime(currentTime)} / {formatTime(duration)}
-            </Typography>
-          </Card>
-        )}
-
-        {/* Timeline / Trimmer - Loom Style */}
-        {!isLoading && (
-          <Box sx={{ px: 2 }}>
-            {/* Trim Info */}
-            <Stack direction="row" justifyContent="space-between" mb={1}>
-              <Typography variant="body2" color="text.secondary">
-                Schnitt: {formatTime(trimStartSeconds)} - {formatTime(trimEndSeconds)}
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                Dauer: {formatTime(trimmedDuration)}
-              </Typography>
-            </Stack>
-
-            {/* Timeline Container */}
-            <Box
-              sx={{
-                position: 'relative',
-                height: 60,
-                bgcolor: 'grey.200',
-                borderRadius: 1,
-                overflow: 'hidden',
-              }}
-            >
-              {/* Ausgeschnittener Bereich (links) */}
+          <Box sx={{ borderTop: '1px solid', borderColor: 'divider' }}>
+            {/* Timeline / Trimmer */}
+            <Box sx={{ px: 3, pt: 2, pb: 1 }}>
               <Box
                 sx={{
-                  position: 'absolute',
-                  left: 0,
-                  top: 0,
-                  bottom: 0,
-                  width: `${trimRange[0]}%`,
-                  bgcolor: 'rgba(0,0,0,0.4)',
-                  zIndex: 1,
+                  position: 'relative',
+                  height: 48,
+                  borderRadius: 1.5,
+                  overflow: 'hidden',
+                  cursor: 'pointer',
                 }}
-              />
+              >
+                {/* Ausgeschnittener Bereich (links) - mit Streifen-Muster */}
+                <Box
+                  sx={{
+                    position: 'absolute',
+                    left: 0,
+                    top: 0,
+                    bottom: 0,
+                    width: `${trimRange[0]}%`,
+                    bgcolor: isDark ? 'rgba(0,0,0,0.7)' : 'rgba(0,0,0,0.3)',
+                    backgroundImage: isDark 
+                      ? 'repeating-linear-gradient(45deg, transparent, transparent 4px, rgba(255,255,255,0.05) 4px, rgba(255,255,255,0.05) 8px)'
+                      : 'repeating-linear-gradient(45deg, transparent, transparent 4px, rgba(0,0,0,0.05) 4px, rgba(0,0,0,0.05) 8px)',
+                    zIndex: 1,
+                  }}
+                />
 
-              {/* Ausgeschnittener Bereich (rechts) */}
-              <Box
-                sx={{
-                  position: 'absolute',
-                  right: 0,
-                  top: 0,
-                  bottom: 0,
-                  width: `${100 - trimRange[1]}%`,
-                  bgcolor: 'rgba(0,0,0,0.4)',
-                  zIndex: 1,
-                }}
-              />
+                {/* Ausgeschnittener Bereich (rechts) */}
+                <Box
+                  sx={{
+                    position: 'absolute',
+                    right: 0,
+                    top: 0,
+                    bottom: 0,
+                    width: `${100 - trimRange[1]}%`,
+                    bgcolor: isDark ? 'rgba(0,0,0,0.7)' : 'rgba(0,0,0,0.3)',
+                    backgroundImage: isDark 
+                      ? 'repeating-linear-gradient(45deg, transparent, transparent 4px, rgba(255,255,255,0.05) 4px, rgba(255,255,255,0.05) 8px)'
+                      : 'repeating-linear-gradient(45deg, transparent, transparent 4px, rgba(0,0,0,0.05) 4px, rgba(0,0,0,0.05) 8px)',
+                    zIndex: 1,
+                  }}
+                />
 
-              {/* Aktiver Bereich */}
-              <Box
-                sx={{
-                  position: 'absolute',
-                  left: `${trimRange[0]}%`,
-                  right: `${100 - trimRange[1]}%`,
-                  top: 0,
-                  bottom: 0,
-                  bgcolor: 'primary.light',
-                  border: '2px solid',
-                  borderColor: 'primary.main',
-                  boxSizing: 'border-box',
-                }}
-              />
+                {/* Aktiver Bereich */}
+                <Box
+                  sx={{
+                    position: 'absolute',
+                    left: `${trimRange[0]}%`,
+                    right: `${100 - trimRange[1]}%`,
+                    top: 0,
+                    bottom: 0,
+                    background: isDark 
+                      ? 'linear-gradient(180deg, #4a4a4a 0%, #3a3a3a 100%)'
+                      : 'linear-gradient(180deg, #f0f0f0 0%, #d8d8d8 100%)',
+                    borderLeft: '3px solid',
+                    borderRight: '3px solid',
+                    borderColor: 'primary.main',
+                    boxSizing: 'border-box',
+                  }}
+                />
 
-              {/* Playhead */}
-              <Box
-                sx={{
-                  position: 'absolute',
-                  left: `${currentPercent}%`,
-                  top: 0,
-                  bottom: 0,
-                  width: 2,
-                  bgcolor: 'error.main',
-                  zIndex: 3,
-                  pointerEvents: 'none',
-                }}
-              />
-
-              {/* Range Slider */}
-              <Slider
-                value={trimRange}
-                onChange={(_, newValue) => {
-                  setTrimRange(newValue as [number, number]);
-                }}
-                onChangeCommitted={(_, newValue) => {
-                  const value = newValue as [number, number];
-                  seekTo(value[0]);
-                }}
-                valueLabelDisplay="auto"
-                valueLabelFormat={(v) => formatTime((v / 100) * duration)}
-                min={0}
-                max={100}
-                step={0.1}
-                disableSwap
-                sx={{
-                  position: 'absolute',
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  bottom: 0,
-                  height: '100%',
-                  '& .MuiSlider-rail': { display: 'none' },
-                  '& .MuiSlider-track': { display: 'none' },
-                  '& .MuiSlider-thumb': {
-                    width: 12,
-                    height: '100%',
-                    borderRadius: 0,
-                    bgcolor: 'primary.dark',
-                    border: 'none',
-                    '&:hover, &.Mui-focusVisible': {
-                      boxShadow: 'none',
-                      bgcolor: 'primary.main',
+                {/* Playhead */}
+                <Box
+                  sx={{
+                    position: 'absolute',
+                    left: `${currentPercent}%`,
+                    top: 0,
+                    bottom: 0,
+                    width: 3,
+                    bgcolor: isDark ? '#fff' : '#1976d2',
+                    zIndex: 3,
+                    pointerEvents: 'none',
+                    boxShadow: isDark ? '0 0 8px rgba(255,255,255,0.5)' : '0 0 8px rgba(25,118,210,0.5)',
+                    '&::after': {
+                      content: '""',
+                      position: 'absolute',
+                      top: -6,
+                      left: -4,
+                      width: 11,
+                      height: 11,
+                      borderRadius: '50%',
+                      bgcolor: isDark ? '#fff' : '#1976d2',
+                      boxShadow: '0 2px 4px rgba(0,0,0,0.3)',
                     },
-                  },
-                }}
-              />
-            </Box>
+                  }}
+                />
 
-            {/* Trimming Progress */}
-            {isTrimming && (
-              <Stack direction="row" spacing={2} alignItems="center" mt={2}>
-                <CircularProgress size={20} />
-                <Typography variant="body2">
-                  Schneide Video... {trimProgress}%
+                {/* Range Slider */}
+                <Slider
+                  value={trimRange}
+                  onChange={(_, newValue) => {
+                    const newRange = newValue as [number, number];
+                    setTrimRange(newRange);
+                    if (!trimmedBlob && (newRange[0] !== 0 || newRange[1] !== 100)) {
+                      setHasPendingCut(true);
+                    } else if (newRange[0] === 0 && newRange[1] === 100) {
+                      setHasPendingCut(false);
+                    }
+                  }}
+                  onChangeCommitted={(_, newValue) => {
+                    const value = newValue as [number, number];
+                    seekTo(value[0]);
+                  }}
+                  valueLabelDisplay="auto"
+                  valueLabelFormat={(v) => formatTime((v / 100) * duration)}
+                  min={0}
+                  max={100}
+                  step={0.1}
+                  disableSwap
+                  sx={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    height: '100%',
+                    '& .MuiSlider-rail': { display: 'none' },
+                    '& .MuiSlider-track': { display: 'none' },
+                    '& .MuiSlider-thumb': {
+                      width: 8,
+                      height: '100%',
+                      borderRadius: 1,
+                      bgcolor: 'primary.main',
+                      border: 'none',
+                      '&:hover, &.Mui-focusVisible': {
+                        boxShadow: '0 0 0 4px rgba(144, 202, 249, 0.3)',
+                      },
+                      '&::before': {
+                        content: '"≡"',
+                        color: 'white',
+                        fontSize: 12,
+                        fontWeight: 'bold',
+                      },
+                    },
+                  }}
+                />
+              </Box>
+
+              {/* Zeit-Info unter der Timeline */}
+              <Stack 
+                direction="row" 
+                justifyContent="space-between" 
+                alignItems="center"
+                sx={{ mt: 1, px: 0.5 }}
+              >
+                <Typography variant="caption" sx={{ color: isDark ? 'grey.500' : 'grey.600', fontFamily: 'monospace' }}>
+                  {formatTime(trimStartSeconds)}
+                </Typography>
+                <Typography variant="caption" sx={{ color: isDark ? 'grey.400' : 'grey.700', fontWeight: 500 }}>
+                  {trimRange[0] === 0 && trimRange[1] === 100 
+                    ? `${formatTime(currentTime)} / ${formatTime(duration)}`
+                    : `Auswahl: ${formatTime(trimmedDuration)}`
+                  }
+                </Typography>
+                <Typography variant="caption" sx={{ color: isDark ? 'grey.500' : 'grey.600', fontFamily: 'monospace' }}>
+                  {formatTime(trimEndSeconds)}
                 </Typography>
               </Stack>
-            )}
+            </Box>
+
+            {/* Controls und Aktionen */}
+            <Stack 
+              direction="row" 
+              alignItems="center" 
+              justifyContent="space-between"
+              sx={{ px: 3, py: 1.5, borderTop: '1px solid', borderColor: 'divider' }}
+            >
+              {/* Linke Controls: Playback */}
+              <Stack direction="row" spacing={0.5} alignItems="center">
+                <IconButton 
+                  onClick={() => seekBy(-5)} 
+                  size="small"
+                  sx={{ color: isDark ? 'grey.400' : 'grey.700', '&:hover': { color: isDark ? 'white' : 'primary.main' } }}
+                >
+                  <Replay5Icon fontSize="small" />
+                </IconButton>
+                <IconButton 
+                  onClick={togglePlay}
+                  sx={{ 
+                    color: 'white',
+                    bgcolor: 'primary.main',
+                    '&:hover': { bgcolor: 'primary.dark' },
+                    mx: 0.5,
+                  }}
+                >
+                  {isPlaying ? <PauseIcon /> : <PlayIcon />}
+                </IconButton>
+                <IconButton 
+                  onClick={() => seekBy(5)} 
+                  size="small"
+                  sx={{ color: isDark ? 'grey.400' : 'grey.700', '&:hover': { color: isDark ? 'white' : 'primary.main' } }}
+                >
+                  <Forward5Icon fontSize="small" />
+                </IconButton>
+
+                <IconButton 
+                  onClick={toggleMute} 
+                  size="small"
+                  sx={{ color: isDark ? 'grey.400' : 'grey.700', '&:hover': { color: isDark ? 'white' : 'primary.main' }, ml: 1.5 }}
+                >
+                  {isMuted || volume === 0 ? <VolumeOffIcon fontSize="small" /> : <VolumeUpIcon fontSize="small" />}
+                </IconButton>
+                <Slider
+                  size="small"
+                  value={Math.round(volume * 100)}
+                  onChange={(_, v) => {
+                    const next = Math.max(0, Math.min(100, Number(v)));
+                    setVolume(next / 100);
+                    if (next > 0) setIsMuted(false);
+                  }}
+                  min={0}
+                  max={100}
+                  sx={{ 
+                    width: 80, 
+                    color: isDark ? 'grey.400' : 'grey.600',
+                    '& .MuiSlider-thumb': { width: 12, height: 12 },
+                  }}
+                />
+
+                <Button 
+                  variant="text" 
+                  size="small" 
+                  onClick={cyclePlaybackRate}
+                  sx={{ 
+                    color: isDark ? 'grey.400' : 'grey.700', 
+                    minWidth: 40,
+                    fontSize: '0.75rem',
+                    '&:hover': { color: isDark ? 'white' : 'primary.main', bgcolor: 'transparent' },
+                  }}
+                >
+                  {playbackRate}x
+                </Button>
+              </Stack>
+
+              {/* Rechte Seite: Aktionen */}
+              <Stack direction="row" spacing={1.5} alignItems="center">
+                {isTrimming && (
+                  <Stack direction="row" spacing={1} alignItems="center">
+                    <CircularProgress size={16} sx={{ color: 'primary.main' }} />
+                    <Typography variant="caption" sx={{ color: 'grey.400' }}>
+                      {trimProgress}%
+                    </Typography>
+                  </Stack>
+                )}
+
+                <Button 
+                  onClick={handleClose} 
+                  disabled={isTrimming}
+                  size="small"
+                  sx={{ color: isDark ? 'grey.400' : 'grey.700' }}
+                >
+                  Abbrechen
+                </Button>
+
+                <Button
+                  variant="outlined"
+                  size="small"
+                  startIcon={<CutIcon />}
+                  onClick={handleTrim}
+                  disabled={isLoading || isTrimming || (trimRange[0] === 0 && trimRange[1] === 100)}
+                  sx={{
+                    borderColor: isDark ? 'grey.600' : 'grey.400',
+                    color: isDark ? 'grey.300' : 'grey.800',
+                    '&:hover': { borderColor: 'primary.main', color: 'primary.main' },
+                    '&.Mui-disabled': { borderColor: isDark ? 'grey.800' : 'grey.300', color: isDark ? 'grey.700' : 'grey.500' },
+                  }}
+                >
+                  Schnitt anwenden
+                </Button>
+
+                <Button
+                  variant="contained"
+                  size="small"
+                  startIcon={<SaveIcon />}
+                  onClick={handleSave}
+                  disabled={isLoading || isTrimming}
+                >
+                  {trimmedBlob ? 'Speichern' : 'Fertig'}
+                </Button>
+              </Stack>
+            </Stack>
           </Box>
         )}
-
-        {/* Aktionen */}
-        <Stack direction="row" spacing={2} justifyContent="center">
-          <Button onClick={onCancel} disabled={isTrimming}>
-            Abbrechen
-          </Button>
-
-          <Button
-            variant="outlined"
-            startIcon={<CutIcon />}
-            onClick={handleTrim}
-            disabled={isLoading || isTrimming || (trimRange[0] === 0 && trimRange[1] === 100)}
-          >
-            Schnitt anwenden
-          </Button>
-
-          <Button
-            variant="contained"
-            startIcon={<SaveIcon />}
-            onClick={handleSave}
-            disabled={isLoading || isTrimming}
-          >
-            {trimmedBlob ? 'Speichern' : 'Fertig'}
-          </Button>
-        </Stack>
       </DialogContent>
+
+      {/* Warnung: Nicht angewendeter Schnitt */}
+      <Dialog open={showCutWarning} onClose={() => setShowCutWarning(false)}>
+        <DialogTitle>Schnitt nicht angewendet</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            Du hast einen Schnitt am Schieber vorbereitet, aber noch nicht auf "Schnitt anwenden" geklickt. 
+            Der Schnitt wird nicht übernommen, wenn du jetzt speicherst.
+          </DialogContentText>
+          <DialogContentText sx={{ mt: 2, fontWeight: 'bold' }}>
+            Möchtest du das Video ohne Schnitt speichern?
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowCutWarning(false)}>
+            Zurück zum Editor
+          </Button>
+          <Button onClick={handleSaveWithoutCut} variant="contained" color="warning">
+            Ohne Schnitt speichern
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Warnung: Schließen ohne Speichern */}
+      <Dialog open={showCloseWarning} onClose={() => setShowCloseWarning(false)}>
+        <DialogTitle>Änderungen nicht gespeichert</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            Du hast einen Schnitt angewendet, aber noch nicht gespeichert. 
+            Wenn du jetzt schließt, geht der bearbeitete Schnitt verloren.
+          </DialogContentText>
+          <DialogContentText sx={{ mt: 2, fontWeight: 'bold' }}>
+            Möchtest du wirklich schließen, ohne zu speichern?
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowCloseWarning(false)} variant="contained">
+            Zurück zum Editor
+          </Button>
+          <Button onClick={handleCloseWithoutSave} color="error">
+            Schließen ohne Speichern
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Dialog>
   );
 }
