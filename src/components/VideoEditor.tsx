@@ -2,7 +2,6 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import {
   Alert,
   Box,
-  Card,
   Button,
   CircularProgress,
   Dialog,

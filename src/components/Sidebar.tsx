@@ -95,7 +95,7 @@ export default function Sidebar() {
       }}
     >
       <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-        <Box sx={{ px: 3, py: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <Box sx={{ px: 3, minHeight: 64, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           {!collapsed && (
             <ButtonBase
               onClick={() => handleNavigate('/home')}

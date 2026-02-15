@@ -121,6 +121,18 @@ export default function Home() {
 
   const loadUserData = async (userId: string) => {
     try {
+      // Lade ausgeblendete Kurse
+      const hiddenCoursesSnapshot = await getDocs(
+        collection(db, 'users', userId, 'hiddenCourses')
+      );
+      const hiddenCourseIds = new Set<string>();
+      hiddenCoursesSnapshot.docs.forEach((docSnapshot) => {
+        const data = docSnapshot.data();
+        if (data.hidden !== false) {
+          hiddenCourseIds.add(docSnapshot.id);
+        }
+      });
+
       // Lade Kurse des Benutzers (selbst erstellt)
       const coursesRef = collection(db, 'users', userId, 'courses');
       const coursesSnapshot = await getDocs(coursesRef);
@@ -130,6 +142,11 @@ export default function Home() {
 
       for (const courseDoc of coursesSnapshot.docs) {
         const courseData = courseDoc.data();
+        
+        // Überspringe ausgeblendete Kurse
+        if (hiddenCourseIds.has(courseDoc.id)) {
+          continue;
+        }
         
         // Lade alle Kapitel und zähle veröffentlichte Lektionen
         const chaptersSnapshot = await getDocs(
@@ -210,6 +227,11 @@ export default function Home() {
         const enrollmentData = enrollmentDoc.data();
         const ownerId = enrollmentData.ownerId;
         const courseId = enrollmentDoc.id;
+
+        // Überspringe ausgeblendete Kurse
+        if (hiddenCourseIds.has(courseId)) {
+          continue;
+        }
 
         if (!ownerId) continue;
 
