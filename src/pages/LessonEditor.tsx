@@ -404,7 +404,7 @@ const LessonEditor = () => {
     const file = event.target.files?.[0];
     if (!file) return;
     
-    const maxSizeInMB = 100;
+    const maxSizeInMB = 1000;
     const maxSizeInBytes = maxSizeInMB * 1024 * 1024;
     
     if (!file.type.startsWith('video/')) {
