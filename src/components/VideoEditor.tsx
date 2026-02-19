@@ -16,6 +16,9 @@ import {
   Typography,
   useTheme,
   alpha,
+  Menu,
+  MenuItem,
+  keyframes,
 } from '@mui/material';
 import {
   Close as CloseIcon,
@@ -32,11 +35,25 @@ import {
   Add as AddIcon,
   ZoomIn as ZoomInIcon,
   ZoomOut as ZoomOutIcon,
+  Speed as SpeedIcon,
 } from '@mui/icons-material';
 
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import coreURL from '@ffmpeg/core?url';
 import wasmURL from '@ffmpeg/core/wasm?url';
+
+// Animations
+const pulseAnimation = keyframes`
+  0% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+  50% { transform: translate(-50%, -50%) scale(1.15); opacity: 0.8; }
+  100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+`;
+
+const clickAnimation = keyframes`
+  0% { transform: translate(-50%, -50%) scale(1); }
+  50% { transform: translate(-50%, -50%) scale(0.9); }
+  100% { transform: translate(-50%, -50%) scale(1); }
+`;
 
 // Types
 type Cut = {
@@ -56,6 +73,8 @@ type VideoEditorProps = {
   onCancel: () => void;
 };
 
+type DragType = 'start' | 'end' | 'move' | 'playhead' | 'trim-start' | 'trim-end' | null;
+
 const generateId = () => Math.random().toString(36).substring(2, 9);
 
 export default function VideoEditor({ videoUrl, onSave, onCancel }: VideoEditorProps) {
@@ -71,6 +90,10 @@ export default function VideoEditor({ videoUrl, onSave, onCancel }: VideoEditorP
   const [originalDuration, setOriginalDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
+  
+  // Trim State (for trimming video start/end)
+  const [trimStart, setTrimStart] = useState(0);
+  const [trimEnd, setTrimEnd] = useState(0);
   
   // Cut State
   const [cuts, setCuts] = useState<Cut[]>([]);
@@ -91,8 +114,12 @@ export default function VideoEditor({ videoUrl, onSave, onCancel }: VideoEditorP
   // UI State
   const [showCloseWarning, setShowCloseWarning] = useState(false);
   const [timelineZoom, setTimelineZoom] = useState(1);
-  const [isDragging, setIsDragging] = useState<'start' | 'end' | 'playhead' | null>(null);
+  const [isDragging, setIsDragging] = useState<DragType>(null);
   const [dragCutId, setDragCutId] = useState<string | null>(null);
+  const [dragStartX, setDragStartX] = useState(0);
+  const [dragStartCut, setDragStartCut] = useState<Cut | null>(null);
+  const [playButtonAnimating, setPlayButtonAnimating] = useState(false);
+  const [speedMenuAnchor, setSpeedMenuAnchor] = useState<null | HTMLElement>(null);
 
   // Refs
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -119,11 +146,25 @@ export default function VideoEditor({ videoUrl, onSave, onCancel }: VideoEditorP
       : `${mins}:${secs.toString().padStart(2, '0')}`;
   }, []);
 
-  // Calculate final duration
+  // Calculate final duration (considering trim and cuts)
   const finalDuration = useMemo(() => {
-    const totalCutTime = cuts.reduce((acc, cut) => acc + (cut.endTime - cut.startTime), 0);
-    return Math.max(0, originalDuration - totalCutTime);
-  }, [cuts, originalDuration]);
+    const trimmedDuration = trimEnd - trimStart;
+    const totalCutTime = cuts.reduce((acc, cut) => {
+      // Only count cuts that are within the trimmed range
+      const cutStart = Math.max(cut.startTime, trimStart);
+      const cutEnd = Math.min(cut.endTime, trimEnd);
+      if (cutEnd > cutStart) {
+        return acc + (cutEnd - cutStart);
+      }
+      return acc;
+    }, 0);
+    return Math.max(0, trimmedDuration - totalCutTime);
+  }, [cuts, trimStart, trimEnd]);
+
+  // Check if there are any edits
+  const hasEdits = useMemo(() => {
+    return cuts.length > 0 || trimStart > 0 || trimEnd < originalDuration;
+  }, [cuts.length, trimStart, trimEnd, originalDuration]);
 
   // Load video
   useEffect(() => {
@@ -179,6 +220,7 @@ export default function VideoEditor({ videoUrl, onSave, onCancel }: VideoEditorP
         setDuration(video.duration);
         if (originalDuration === 0) {
           setOriginalDuration(video.duration);
+          setTrimEnd(video.duration); // Initialize trim end to video duration
         }
       }
       setIsLoading(false);
@@ -189,7 +231,7 @@ export default function VideoEditor({ videoUrl, onSave, onCancel }: VideoEditorP
     const onPause = () => setIsPlaying(false);
     const onEnded = () => {
       setIsPlaying(false);
-      video.currentTime = 0;
+      video.currentTime = trimStart; // Go back to trim start
     };
     const onError = () => {
       setError('Video konnte nicht abgespielt werden');
@@ -212,7 +254,7 @@ export default function VideoEditor({ videoUrl, onSave, onCancel }: VideoEditorP
       video.removeEventListener('ended', onEnded);
       video.removeEventListener('error', onError);
     };
-  }, [videoBlobUrl, originalDuration]);
+  }, [videoBlobUrl, originalDuration, trimStart]);
 
   // Generate thumbnails
   useEffect(() => {
@@ -275,30 +317,35 @@ export default function VideoEditor({ videoUrl, onSave, onCancel }: VideoEditorP
     video.playbackRate = playbackRate;
   }, [isMuted, volume, playbackRate, videoBlobUrl]);
 
-  // Playback controls
+  // Playback controls with animation
   const togglePlay = useCallback(() => {
     const video = videoRef.current;
     if (!video) return;
+    setPlayButtonAnimating(true);
+    setTimeout(() => setPlayButtonAnimating(false), 300);
     video.paused ? video.play() : video.pause();
   }, []);
 
   const seekTo = useCallback((time: number) => {
     const video = videoRef.current;
     if (!video) return;
-    video.currentTime = Math.max(0, Math.min(time, duration));
-  }, [duration]);
+    // Constrain to trim bounds
+    const constrainedTime = Math.max(trimStart, Math.min(time, trimEnd));
+    video.currentTime = constrainedTime;
+  }, [trimStart, trimEnd]);
 
   const seekBy = useCallback((delta: number) => {
     const video = videoRef.current;
     if (!video) return;
-    video.currentTime = Math.max(0, Math.min(video.currentTime + delta, duration));
-  }, [duration]);
+    const newTime = Math.max(trimStart, Math.min(video.currentTime + delta, trimEnd));
+    video.currentTime = newTime;
+  }, [trimStart, trimEnd]);
 
   // Cut management
   const addCutAtPlayhead = useCallback(() => {
     const cutDuration = Math.min(2, originalDuration * 0.1);
-    const startTime = Math.max(0, currentTime - cutDuration / 2);
-    const endTime = Math.min(originalDuration, startTime + cutDuration);
+    const startTime = Math.max(trimStart, currentTime - cutDuration / 2);
+    const endTime = Math.min(trimEnd, startTime + cutDuration);
     
     const overlaps = cuts.some(cut => 
       (startTime >= cut.startTime && startTime < cut.endTime) ||
@@ -314,7 +361,7 @@ export default function VideoEditor({ videoUrl, onSave, onCancel }: VideoEditorP
     const newCut: Cut = { id: generateId(), startTime, endTime };
     setCuts(prev => [...prev, newCut]);
     setSelectedCutId(newCut.id);
-  }, [currentTime, cuts, originalDuration]);
+  }, [currentTime, cuts, trimStart, trimEnd, originalDuration]);
 
   const updateCut = useCallback((cutId: string, updates: Partial<Cut>) => {
     setCuts(prev => prev.map(cut => {
@@ -341,6 +388,8 @@ export default function VideoEditor({ videoUrl, onSave, onCancel }: VideoEditorP
   const resetAllCuts = useCallback(() => {
     setCuts([]);
     setSelectedCutId(null);
+    setTrimStart(0);
+    setTrimEnd(originalDuration);
     if (originalBlobUrl && videoBlobUrl !== originalBlobUrl) {
       setVideoBlobUrl(originalBlobUrl);
       setDuration(originalDuration);
@@ -359,13 +408,18 @@ export default function VideoEditor({ videoUrl, onSave, onCancel }: VideoEditorP
 
   const handleTimelineMouseDown = useCallback((
     e: React.MouseEvent,
-    type: 'start' | 'end' | 'playhead',
+    type: DragType,
     cutId?: string
   ) => {
     e.stopPropagation();
     setIsDragging(type);
-    if (cutId) setDragCutId(cutId);
-  }, []);
+    setDragStartX(e.clientX);
+    if (cutId) {
+      setDragCutId(cutId);
+      const cut = cuts.find(c => c.id === cutId);
+      if (cut) setDragStartCut({ ...cut });
+    }
+  }, [cuts]);
 
   const handleTimelineMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     if (!isDragging || !timelineRef.current) return;
@@ -375,14 +429,52 @@ export default function VideoEditor({ videoUrl, onSave, onCancel }: VideoEditorP
     
     if (isDragging === 'playhead') {
       seekTo(time);
-    } else if (dragCutId) {
+    } else if (isDragging === 'trim-start') {
+      const newTrimStart = Math.max(0, Math.min(time, trimEnd - 0.5));
+      setTrimStart(newTrimStart);
+      // Remove cuts that are now outside trim range
+      setCuts(prev => prev.filter(cut => cut.endTime > newTrimStart));
+    } else if (isDragging === 'trim-end') {
+      const newTrimEnd = Math.min(originalDuration, Math.max(time, trimStart + 0.5));
+      setTrimEnd(newTrimEnd);
+      // Remove cuts that are now outside trim range
+      setCuts(prev => prev.filter(cut => cut.startTime < newTrimEnd));
+    } else if (isDragging === 'move' && dragCutId && dragStartCut) {
+      // Move the entire cut region
+      const deltaX = e.clientX - dragStartX;
+      const deltaTime = (deltaX / rect.width) * originalDuration;
+      const cutDuration = dragStartCut.endTime - dragStartCut.startTime;
+      let newStart = dragStartCut.startTime + deltaTime;
+      let newEnd = dragStartCut.endTime + deltaTime;
+      
+      // Constrain to trim bounds
+      if (newStart < trimStart) {
+        newStart = trimStart;
+        newEnd = trimStart + cutDuration;
+      }
+      if (newEnd > trimEnd) {
+        newEnd = trimEnd;
+        newStart = trimEnd - cutDuration;
+      }
+      
+      // Check for overlaps with other cuts
+      const otherCuts = cuts.filter(c => c.id !== dragCutId);
+      const wouldOverlap = otherCuts.some(cut => 
+        (newStart < cut.endTime && newEnd > cut.startTime)
+      );
+      
+      if (!wouldOverlap) {
+        updateCut(dragCutId, { startTime: newStart, endTime: newEnd });
+      }
+    } else if (dragCutId && (isDragging === 'start' || isDragging === 'end')) {
       updateCut(dragCutId, { [isDragging === 'start' ? 'startTime' : 'endTime']: time });
     }
-  }, [isDragging, dragCutId, originalDuration, seekTo, updateCut]);
+  }, [isDragging, dragCutId, dragStartCut, dragStartX, originalDuration, trimStart, trimEnd, cuts, seekTo, updateCut]);
 
   const handleTimelineMouseUp = useCallback(() => {
     setIsDragging(null);
     setDragCutId(null);
+    setDragStartCut(null);
   }, []);
 
   // FFmpeg
@@ -397,7 +489,13 @@ export default function VideoEditor({ videoUrl, onSave, onCancel }: VideoEditorP
   }, []);
 
   const processVideo = useCallback(async () => {
-    if (!originalBlobUrl || cuts.length === 0) return;
+    if (!originalBlobUrl) return;
+    
+    // Check if there's anything to process
+    const hasTrim = trimStart > 0 || trimEnd < originalDuration;
+    const hasCuts = cuts.length > 0;
+    
+    if (!hasTrim && !hasCuts) return;
     
     setIsProcessing(true);
     setProcessProgress(0);
@@ -418,18 +516,24 @@ export default function VideoEditor({ videoUrl, onSave, onCancel }: VideoEditorP
       
       await ffmpeg.writeFile('input.webm', videoData);
       
-      const sortedCuts = [...cuts].sort((a, b) => a.startTime - b.startTime);
+      // Build segments considering both trim and cuts
+      const sortedCuts = [...cuts]
+        .filter(cut => cut.startTime < trimEnd && cut.endTime > trimStart)
+        .sort((a, b) => a.startTime - b.startTime);
+      
       const keepSegments: { start: number; end: number }[] = [];
-      let currentStart = 0;
+      let currentStart = trimStart;
       
       for (const cut of sortedCuts) {
-        if (cut.startTime > currentStart) {
-          keepSegments.push({ start: currentStart, end: cut.startTime });
+        const cutStart = Math.max(cut.startTime, trimStart);
+        const cutEnd = Math.min(cut.endTime, trimEnd);
+        if (cutStart > currentStart) {
+          keepSegments.push({ start: currentStart, end: cutStart });
         }
-        currentStart = cut.endTime;
+        currentStart = cutEnd;
       }
-      if (currentStart < originalDuration) {
-        keepSegments.push({ start: currentStart, end: originalDuration });
+      if (currentStart < trimEnd) {
+        keepSegments.push({ start: currentStart, end: trimEnd });
       }
       
       if (keepSegments.length === 0) {
@@ -442,13 +546,17 @@ export default function VideoEditor({ videoUrl, onSave, onCancel }: VideoEditorP
       for (let i = 0; i < keepSegments.length; i++) {
         const segment = keepSegments[i];
         const segmentFile = `segment${i}.mp4`;
+        // Optimized FFmpeg parameters for faster processing
         await ffmpeg.exec([
+          '-ss', String(segment.start),  // Seek before input for faster seeking
           '-i', 'input.webm',
-          '-ss', String(segment.start),
-          '-to', String(segment.end),
+          '-t', String(segment.end - segment.start),
           '-c:v', 'libx264',
           '-preset', 'ultrafast',
+          '-crf', '23',  // Good quality with reasonable file size
           '-c:a', 'aac',
+          '-b:a', '128k',
+          '-movflags', '+faststart',
           '-y',
           segmentFile
         ]);
@@ -478,6 +586,9 @@ export default function VideoEditor({ videoUrl, onSave, onCancel }: VideoEditorP
       setDuration(finalDuration);
       setCuts([]);
       setSelectedCutId(null);
+      setTrimStart(0);
+      setTrimEnd(finalDuration);
+      setOriginalDuration(finalDuration);
       setHasAppliedCuts(true);
       setProcessProgress(100);
     } catch (err) {
@@ -486,28 +597,28 @@ export default function VideoEditor({ videoUrl, onSave, onCancel }: VideoEditorP
     } finally {
       setIsProcessing(false);
     }
-  }, [originalBlobUrl, cuts, originalDuration, finalDuration, loadFFmpeg]);
+  }, [originalBlobUrl, cuts, originalDuration, trimStart, trimEnd, finalDuration, loadFFmpeg]);
 
   // Save
   const handleSave = useCallback(async () => {
-    if (cuts.length > 0) {
+    if (hasEdits) {
       await processVideo();
     }
     if (videoBlobUrl) {
       const response = await fetch(videoBlobUrl);
       const blob = await response.blob();
-      onSave(blob, cuts.length > 0 ? finalDuration : duration);
+      onSave(blob, hasEdits ? finalDuration : duration);
     }
-  }, [cuts, videoBlobUrl, processVideo, finalDuration, duration, onSave]);
+  }, [hasEdits, videoBlobUrl, processVideo, finalDuration, duration, onSave]);
 
   // Close
   const handleClose = useCallback(() => {
-    if (hasAppliedCuts || cuts.length > 0) {
+    if (hasAppliedCuts || hasEdits) {
       setShowCloseWarning(true);
     } else {
       onCancel();
     }
-  }, [hasAppliedCuts, cuts.length, onCancel]);
+  }, [hasAppliedCuts, hasEdits, onCancel]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -618,10 +729,42 @@ export default function VideoEditor({ videoUrl, onSave, onCancel }: VideoEditorP
             </Stack>
           )}
 
-          {!isLoading && !isPlaying && (
-            <Box sx={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: 'rgba(0,0,0,0.3)' }}>
-              <Box sx={{ width: 72, height: 72, borderRadius: '50%', bgcolor: 'rgba(255,255,255,0.95)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 24px rgba(0,0,0,0.4)' }}>
-                <PlayIcon sx={{ fontSize: 40, color: '#111', ml: 0.5 }} />
+          {/* Play/Pause Button with Animation */}
+          {!isLoading && (
+            <Box 
+              sx={{ 
+                position: 'absolute', 
+                top: '50%',
+                left: '50%',
+                transform: 'translate(-50%, -50%)',
+                display: 'flex', 
+                alignItems: 'center', 
+                justifyContent: 'center',
+                pointerEvents: 'none',
+              }}
+            >
+              <Box 
+                sx={{ 
+                  width: 72, 
+                  height: 72, 
+                  borderRadius: '50%', 
+                  bgcolor: isPlaying ? 'rgba(0,0,0,0.5)' : 'rgba(255,255,255,0.95)', 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center', 
+                  boxShadow: '0 4px 24px rgba(0,0,0,0.4)',
+                  opacity: isPlaying ? 0 : 1,
+                  transition: 'opacity 0.2s ease, transform 0.2s ease',
+                  animation: playButtonAnimating 
+                    ? `${clickAnimation} 0.3s ease`
+                    : (!isPlaying ? `${pulseAnimation} 2s ease-in-out infinite` : 'none'),
+                }}
+              >
+                {isPlaying ? (
+                  <PauseIcon sx={{ fontSize: 40, color: 'white' }} />
+                ) : (
+                  <PlayIcon sx={{ fontSize: 40, color: '#111', ml: 0.5 }} />
+                )}
               </Box>
             </Box>
           )}
@@ -630,75 +773,141 @@ export default function VideoEditor({ videoUrl, onSave, onCancel }: VideoEditorP
         {/* Controls */}
         {!isLoading && (
           <Box sx={{ bgcolor: isDark ? '#1a1a1a' : '#fff', borderTop: '1px solid', borderColor: 'divider' }}>
-            {/* Playback Controls */}
-            <Stack direction="row" alignItems="center" justifyContent="center" spacing={1} sx={{ py: 1.5, borderBottom: '1px solid', borderColor: 'divider' }}>
-              <IconButton onClick={() => seekBy(-5)} size="small"><Replay5Icon /></IconButton>
-              <IconButton onClick={togglePlay} sx={{ bgcolor: 'primary.main', color: 'white', '&:hover': { bgcolor: 'primary.dark' }, width: 44, height: 44 }}>
+            {/* Playback Controls - Simplified */}
+            <Stack direction="row" alignItems="center" justifyContent="center" spacing={0.5} sx={{ py: 1, borderBottom: '1px solid', borderColor: 'divider' }}>
+              <Tooltip title="5s zurück">
+                <IconButton onClick={() => seekBy(-5)} size="small"><Replay5Icon fontSize="small" /></IconButton>
+              </Tooltip>
+              <IconButton 
+                onClick={togglePlay} 
+                sx={{ 
+                  bgcolor: 'primary.main', 
+                  color: 'white', 
+                  '&:hover': { bgcolor: 'primary.dark' }, 
+                  width: 40, 
+                  height: 40,
+                  mx: 0.5,
+                }}
+              >
                 {isPlaying ? <PauseIcon /> : <PlayIcon />}
               </IconButton>
-              <IconButton onClick={() => seekBy(5)} size="small"><Forward5Icon /></IconButton>
-              <Typography variant="body2" sx={{ fontFamily: 'monospace', minWidth: 180, textAlign: 'center', color: 'text.secondary' }}>
+              <Tooltip title="5s vorwärts">
+                <IconButton onClick={() => seekBy(5)} size="small"><Forward5Icon fontSize="small" /></IconButton>
+              </Tooltip>
+              <Typography variant="body2" sx={{ fontFamily: 'monospace', minWidth: 160, textAlign: 'center', color: 'text.secondary', fontSize: '0.8rem' }}>
                 {formatTime(currentTime, true)} / {formatTime(originalDuration, true)}
               </Typography>
-              <IconButton onClick={() => setIsMuted(!isMuted)} size="small" sx={{ ml: 2 }}>
-                {isMuted ? <VolumeOffIcon /> : <VolumeUpIcon />}
-              </IconButton>
-              <Slider
-                size="small"
-                value={Math.round(volume * 100)}
-                onChange={(_, v) => {
-                  const next = Math.max(0, Math.min(100, Number(v)));
-                  setVolume(next / 100);
-                  if (next > 0) setIsMuted(false);
-                }}
-                min={0}
-                max={100}
-                sx={{ width: 80, '& .MuiSlider-thumb': { width: 12, height: 12 } }}
-              />
-              <Button size="small" onClick={() => {
-                const rates = [0.5, 1, 1.25, 1.5, 2];
-                const idx = rates.indexOf(playbackRate);
-                setPlaybackRate(rates[(idx + 1) % rates.length]);
-              }} sx={{ minWidth: 50, fontWeight: 600 }}>
-                {playbackRate}x
-              </Button>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, ml: 1, borderLeft: '1px solid', borderColor: 'divider', pl: 1 }}>
+                <Tooltip title={isMuted ? 'Ton an' : 'Ton aus'}>
+                  <IconButton onClick={() => setIsMuted(!isMuted)} size="small">
+                    {isMuted ? <VolumeOffIcon fontSize="small" /> : <VolumeUpIcon fontSize="small" />}
+                  </IconButton>
+                </Tooltip>
+                <Slider
+                  size="small"
+                  value={Math.round(volume * 100)}
+                  onChange={(_, v) => {
+                    const next = Math.max(0, Math.min(100, Number(v)));
+                    setVolume(next / 100);
+                    if (next > 0) setIsMuted(false);
+                  }}
+                  min={0}
+                  max={100}
+                  sx={{ width: 60, '& .MuiSlider-thumb': { width: 10, height: 10 } }}
+                />
+              </Box>
+              <Box sx={{ borderLeft: '1px solid', borderColor: 'divider', pl: 1, ml: 0.5 }}>
+                <Tooltip title="Abspielgeschwindigkeit">
+                  <Button 
+                    size="small" 
+                    onClick={(e) => setSpeedMenuAnchor(e.currentTarget)}
+                    startIcon={<SpeedIcon fontSize="small" />}
+                    sx={{ minWidth: 'auto', fontWeight: 600, fontSize: '0.8rem' }}
+                  >
+                    {playbackRate}x
+                  </Button>
+                </Tooltip>
+                <Menu
+                  anchorEl={speedMenuAnchor}
+                  open={Boolean(speedMenuAnchor)}
+                  onClose={() => setSpeedMenuAnchor(null)}
+                  anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+                  transformOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+                >
+                  {[0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2].map((rate) => (
+                    <MenuItem 
+                      key={rate} 
+                      onClick={() => { setPlaybackRate(rate); setSpeedMenuAnchor(null); }}
+                      selected={playbackRate === rate}
+                      sx={{ fontSize: '0.875rem', py: 0.5 }}
+                    >
+                      {rate}x {rate === 1 && '(Normal)'}
+                    </MenuItem>
+                  ))}
+                </Menu>
+              </Box>
             </Stack>
 
             {/* Timeline */}
-            <Box sx={{ px: 2, py: 2 }}>
-              <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1.5 }}>
-                <Stack direction="row" spacing={1} alignItems="center">
-                  <Tooltip title="Schnitt an Playhead hinzufügen (C)">
-                    <Button variant="contained" size="small" startIcon={<AddIcon />} onClick={addCutAtPlayhead} disabled={isProcessing}
-                      sx={{ bgcolor: '#f97316', '&:hover': { bgcolor: '#ea580c' } }}>
-                      Schnitt hinzufügen
-                    </Button>
+            <Box sx={{ px: 2, py: 1.5 }}>
+              {/* Simplified toolbar - icon buttons only */}
+              <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
+                <Stack direction="row" spacing={0.5} alignItems="center">
+                  <Tooltip title="Schnitt hinzufügen (C)">
+                    <IconButton 
+                      onClick={addCutAtPlayhead} 
+                      disabled={isProcessing}
+                      sx={{ 
+                        bgcolor: '#f97316', 
+                        color: 'white',
+                        '&:hover': { bgcolor: '#ea580c' },
+                        '&.Mui-disabled': { bgcolor: 'action.disabledBackground' }
+                      }}
+                      size="small"
+                    >
+                      <AddIcon fontSize="small" />
+                    </IconButton>
                   </Tooltip>
                   {selectedCutId && (
-                    <Tooltip title="Ausgewählten Schnitt löschen (Entf)">
-                      <Button variant="outlined" size="small" startIcon={<DeleteIcon />} onClick={deleteSelectedCut} disabled={isProcessing} color="error">
-                        Schnitt löschen
-                      </Button>
+                    <Tooltip title="Schnitt löschen (Entf)">
+                      <IconButton 
+                        onClick={deleteSelectedCut} 
+                        disabled={isProcessing} 
+                        color="error"
+                        size="small"
+                      >
+                        <DeleteIcon fontSize="small" />
+                      </IconButton>
                     </Tooltip>
                   )}
-                  {cuts.length > 0 && (
-                    <Tooltip title="Alle Schnitte zurücksetzen">
-                      <Button variant="outlined" size="small" startIcon={<ResetIcon />} onClick={resetAllCuts} disabled={isProcessing}>
-                        Zurücksetzen
-                      </Button>
+                  {hasEdits && (
+                    <Tooltip title="Alles zurücksetzen">
+                      <IconButton 
+                        onClick={resetAllCuts} 
+                        disabled={isProcessing}
+                        size="small"
+                      >
+                        <ResetIcon fontSize="small" />
+                      </IconButton>
                     </Tooltip>
                   )}
                 </Stack>
                 <Stack direction="row" spacing={0.5} alignItems="center">
-                  <Typography variant="caption" color="text.secondary" sx={{ mr: 1 }}>
-                    {cuts.length > 0 ? `${cuts.length} Schnitt${cuts.length > 1 ? 'e' : ''} • Finale Länge: ${formatTime(finalDuration)}` : 'Klicke auf "Schnitt hinzufügen" um Bereiche zu entfernen'}
+                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
+                    {hasEdits 
+                      ? `Finale Länge: ${formatTime(finalDuration)}` 
+                      : 'Ziehe die orangenen Handles zum Kürzen'}
                   </Typography>
-                  <IconButton size="small" onClick={() => setTimelineZoom(z => Math.max(0.5, z - 0.25))} disabled={timelineZoom <= 0.5}>
-                    <ZoomOutIcon fontSize="small" />
-                  </IconButton>
-                  <IconButton size="small" onClick={() => setTimelineZoom(z => Math.min(3, z + 0.25))} disabled={timelineZoom >= 3}>
-                    <ZoomInIcon fontSize="small" />
-                  </IconButton>
+                  <Tooltip title="Verkleinern">
+                    <IconButton size="small" onClick={() => setTimelineZoom(z => Math.max(0.5, z - 0.25))} disabled={timelineZoom <= 0.5}>
+                      <ZoomOutIcon sx={{ fontSize: 18 }} />
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip title="Vergrößern">
+                    <IconButton size="small" onClick={() => setTimelineZoom(z => Math.min(3, z + 0.25))} disabled={timelineZoom >= 3}>
+                      <ZoomInIcon sx={{ fontSize: 18 }} />
+                    </IconButton>
+                  </Tooltip>
                 </Stack>
               </Stack>
 
@@ -729,6 +938,92 @@ export default function VideoEditor({ videoUrl, onSave, onCancel }: VideoEditorP
                     </Box>
                   )}
 
+                  {/* Trimmed-out regions (darkened areas outside trim range) */}
+                  {trimStart > 0 && (
+                    <Box
+                      sx={{
+                        position: 'absolute',
+                        left: 0,
+                        width: `${(trimStart / originalDuration) * 100}%`,
+                        top: 0,
+                        bottom: 0,
+                        bgcolor: 'rgba(0,0,0,0.7)',
+                        zIndex: 3,
+                        pointerEvents: 'none',
+                      }}
+                    />
+                  )}
+                  {trimEnd < originalDuration && (
+                    <Box
+                      sx={{
+                        position: 'absolute',
+                        right: 0,
+                        width: `${((originalDuration - trimEnd) / originalDuration) * 100}%`,
+                        top: 0,
+                        bottom: 0,
+                        bgcolor: 'rgba(0,0,0,0.7)',
+                        zIndex: 3,
+                        pointerEvents: 'none',
+                      }}
+                    />
+                  )}
+
+                  {/* Trim Start Handle */}
+                  <Box
+                    onMouseDown={(e) => handleTimelineMouseDown(e, 'trim-start')}
+                    sx={{
+                      position: 'absolute',
+                      left: `${(trimStart / originalDuration) * 100}%`,
+                      top: 0,
+                      bottom: 0,
+                      width: 16,
+                      transform: 'translateX(-50%)',
+                      cursor: 'ew-resize',
+                      zIndex: 5,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      '&:hover > div': { bgcolor: '#ea580c' },
+                    }}
+                  >
+                    <Box sx={{ 
+                      width: 6, 
+                      height: '100%', 
+                      bgcolor: '#f97316', 
+                      borderRadius: '4px 0 0 4px',
+                      boxShadow: '-2px 0 4px rgba(0,0,0,0.3)',
+                      transition: 'background-color 0.15s',
+                    }} />
+                  </Box>
+
+                  {/* Trim End Handle */}
+                  <Box
+                    onMouseDown={(e) => handleTimelineMouseDown(e, 'trim-end')}
+                    sx={{
+                      position: 'absolute',
+                      left: `${(trimEnd / originalDuration) * 100}%`,
+                      top: 0,
+                      bottom: 0,
+                      width: 16,
+                      transform: 'translateX(-50%)',
+                      cursor: 'ew-resize',
+                      zIndex: 5,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      '&:hover > div': { bgcolor: '#ea580c' },
+                    }}
+                  >
+                    <Box sx={{ 
+                      width: 6, 
+                      height: '100%', 
+                      bgcolor: '#f97316', 
+                      borderRadius: '0 4px 4px 0',
+                      boxShadow: '2px 0 4px rgba(0,0,0,0.3)',
+                      transition: 'background-color 0.15s',
+                    }} />
+                  </Box>
+
                   {/* Cut regions */}
                   {cuts.map((cut) => {
                     const leftPercent = (cut.startTime / originalDuration) * 100;
@@ -738,6 +1033,15 @@ export default function VideoEditor({ videoUrl, onSave, onCancel }: VideoEditorP
                       <Box
                         key={cut.id}
                         onClick={(e) => { e.stopPropagation(); setSelectedCutId(cut.id); }}
+                        onMouseDown={(e) => { 
+                          // If clicking on center (not handles), start move drag
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          const relX = e.clientX - rect.left;
+                          const handleZone = 16;
+                          if (relX > handleZone && relX < rect.width - handleZone) {
+                            handleTimelineMouseDown(e, 'move', cut.id);
+                          }
+                        }}
                         sx={{
                           position: 'absolute',
                           left: `${leftPercent}%`,
@@ -749,18 +1053,22 @@ export default function VideoEditor({ videoUrl, onSave, onCancel }: VideoEditorP
                           border: isSelected ? '2px solid #ef4444' : 'none',
                           boxShadow: isSelected ? '0 0 0 2px rgba(239,68,68,0.3)' : 'none',
                           zIndex: 2,
-                          cursor: 'pointer',
+                          cursor: 'grab',
+                          '&:active': { cursor: 'grabbing' },
                         }}
                       >
+                        {/* Start resize handle */}
                         <Box onMouseDown={(e) => handleTimelineMouseDown(e, 'start', cut.id)}
-                          sx={{ position: 'absolute', left: -4, top: 0, bottom: 0, width: 12, cursor: 'ew-resize', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                          <Box sx={{ width: 4, height: '60%', bgcolor: 'rgba(255,255,255,0.8)', borderRadius: 1 }} />
+                          sx={{ position: 'absolute', left: -4, top: 0, bottom: 0, width: 12, cursor: 'ew-resize', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1 }}>
+                          <Box sx={{ width: 4, height: '60%', bgcolor: 'rgba(255,255,255,0.9)', borderRadius: 1 }} />
                         </Box>
+                        {/* End resize handle */}
                         <Box onMouseDown={(e) => handleTimelineMouseDown(e, 'end', cut.id)}
-                          sx={{ position: 'absolute', right: -4, top: 0, bottom: 0, width: 12, cursor: 'ew-resize', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                          <Box sx={{ width: 4, height: '60%', bgcolor: 'rgba(255,255,255,0.8)', borderRadius: 1 }} />
+                          sx={{ position: 'absolute', right: -4, top: 0, bottom: 0, width: 12, cursor: 'ew-resize', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1 }}>
+                          <Box sx={{ width: 4, height: '60%', bgcolor: 'rgba(255,255,255,0.9)', borderRadius: 1 }} />
                         </Box>
-                        <Box sx={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', bgcolor: 'rgba(0,0,0,0.8)', color: 'white', px: 1, py: 0.5, borderRadius: 1, fontSize: '0.7rem', fontWeight: 600, whiteSpace: 'nowrap', pointerEvents: 'none', opacity: isSelected || widthPercent > 5 ? 1 : 0 }}>
+                        {/* Duration label */}
+                        <Box sx={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', bgcolor: 'rgba(0,0,0,0.8)', color: 'white', px: 1, py: 0.5, borderRadius: 1, fontSize: '0.65rem', fontWeight: 600, whiteSpace: 'nowrap', pointerEvents: 'none', opacity: isSelected || widthPercent > 5 ? 1 : 0 }}>
                           {formatTime(cut.endTime - cut.startTime)}
                         </Box>
                       </Box>
@@ -791,30 +1099,46 @@ export default function VideoEditor({ videoUrl, onSave, onCancel }: VideoEditorP
               </Box>
 
               <Stack direction="row" justifyContent="space-between" sx={{ mt: 0.5, px: 0.5 }}>
-                <Typography variant="caption" color="text.secondary" fontFamily="monospace">0:00</Typography>
-                <Typography variant="caption" color="text.secondary" fontFamily="monospace">{formatTime(originalDuration / 4)}</Typography>
-                <Typography variant="caption" color="text.secondary" fontFamily="monospace">{formatTime(originalDuration / 2)}</Typography>
-                <Typography variant="caption" color="text.secondary" fontFamily="monospace">{formatTime((originalDuration / 4) * 3)}</Typography>
-                <Typography variant="caption" color="text.secondary" fontFamily="monospace">{formatTime(originalDuration)}</Typography>
+                <Typography variant="caption" color="text.secondary" fontFamily="monospace" fontSize="0.65rem">0:00</Typography>
+                <Typography variant="caption" color="text.secondary" fontFamily="monospace" fontSize="0.65rem">{formatTime(originalDuration / 4)}</Typography>
+                <Typography variant="caption" color="text.secondary" fontFamily="monospace" fontSize="0.65rem">{formatTime(originalDuration / 2)}</Typography>
+                <Typography variant="caption" color="text.secondary" fontFamily="monospace" fontSize="0.65rem">{formatTime((originalDuration / 4) * 3)}</Typography>
+                <Typography variant="caption" color="text.secondary" fontFamily="monospace" fontSize="0.65rem">{formatTime(originalDuration)}</Typography>
               </Stack>
             </Box>
 
-            {/* Actions */}
-            <Stack direction="row" justifyContent="flex-end" alignItems="center" spacing={1.5} sx={{ px: 2, py: 1.5, borderTop: '1px solid', borderColor: 'divider' }}>
+            {/* Actions - Simplified */}
+            <Stack direction="row" justifyContent="flex-end" alignItems="center" spacing={1} sx={{ px: 2, py: 1, borderTop: '1px solid', borderColor: 'divider' }}>
               {isProcessing && (
                 <Stack direction="row" spacing={1} alignItems="center" sx={{ mr: 'auto' }}>
-                  <CircularProgress size={20} sx={{ color: 'primary.main' }} />
-                  <Typography variant="body2" color="text.secondary">Verarbeite Video... {processProgress}%</Typography>
+                  <CircularProgress size={18} sx={{ color: 'primary.main' }} />
+                  <Typography variant="caption" color="text.secondary">Verarbeite... {processProgress}%</Typography>
                 </Stack>
               )}
-              <Button onClick={handleClose} disabled={isProcessing}>Abbrechen</Button>
-              {cuts.length > 0 && (
-                <Button variant="outlined" startIcon={<CutIcon />} onClick={processVideo} disabled={isProcessing}>
-                  Schnitte anwenden
-                </Button>
+              <Button size="small" onClick={handleClose} disabled={isProcessing}>
+                Abbrechen
+              </Button>
+              {hasEdits && (
+                <Tooltip title="Schnitte anwenden ohne zu speichern">
+                  <Button 
+                    variant="outlined" 
+                    size="small"
+                    onClick={processVideo} 
+                    disabled={isProcessing}
+                    startIcon={<CutIcon fontSize="small" />}
+                  >
+                    Anwenden
+                  </Button>
+                </Tooltip>
               )}
-              <Button variant="contained" startIcon={<SaveIcon />} onClick={handleSave} disabled={isLoading || isProcessing}>
-                {cuts.length > 0 ? 'Schneiden & Speichern' : 'Speichern'}
+              <Button 
+                variant="contained" 
+                size="small"
+                startIcon={<SaveIcon fontSize="small" />} 
+                onClick={handleSave} 
+                disabled={isLoading || isProcessing}
+              >
+                Speichern
               </Button>
             </Stack>
           </Box>
@@ -826,13 +1150,15 @@ export default function VideoEditor({ videoUrl, onSave, onCancel }: VideoEditorP
         <DialogTitle>Änderungen verwerfen?</DialogTitle>
         <DialogContent>
           <DialogContentText>
-            Du hast {cuts.length > 0 ? `${cuts.length} Schnitt${cuts.length > 1 ? 'e' : ''} vorbereitet` : 'ungespeicherte Änderungen'}.
-            Wenn du jetzt schließt, gehen diese verloren.
+            {hasEdits
+              ? 'Du hast ungespeicherte Änderungen (Trim/Schnitte). Wenn du jetzt schließt, gehen diese verloren.'
+              : 'Möchtest du den Editor wirklich schließen?'
+            }
           </DialogContentText>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setShowCloseWarning(false)}>Zurück zum Editor</Button>
-          <Button onClick={onCancel} color="error">Schließen ohne Speichern</Button>
+          <Button onClick={() => setShowCloseWarning(false)}>Zurück</Button>
+          <Button onClick={onCancel} color="error">Schließen</Button>
         </DialogActions>
       </Dialog>
     </Dialog>
