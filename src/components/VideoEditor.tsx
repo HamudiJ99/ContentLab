@@ -703,7 +703,7 @@ export default function VideoEditor({ videoUrl, onSave, onCancel }: VideoEditorP
             justifyContent: 'center',
             position: 'relative',
             minHeight: 300,
-            bgcolor: '#000',
+            bgcolor: isDark ? '#0f0f0f' : '#fafafa',
             cursor: 'pointer',
           }}
           onClick={togglePlay}
@@ -724,8 +724,8 @@ export default function VideoEditor({ videoUrl, onSave, onCancel }: VideoEditorP
 
           {isLoading && (
             <Stack spacing={2} alignItems="center" sx={{ position: 'absolute', inset: 0, justifyContent: 'center' }}>
-              <CircularProgress sx={{ color: 'white' }} />
-              <Typography color="white">Video wird geladen...</Typography>
+              <CircularProgress sx={{ color: isDark ? 'white' : 'primary.main' }} />
+              <Typography color={isDark ? 'white' : 'text.primary'}>Video wird geladen...</Typography>
             </Stack>
           )}
 
@@ -938,7 +938,7 @@ export default function VideoEditor({ videoUrl, onSave, onCancel }: VideoEditorP
                     </Box>
                   )}
 
-                  {/* Trimmed-out regions (darkened areas outside trim range) */}
+                  {/* Trimmed-out regions (areas outside trim range) */}
                   {trimStart > 0 && (
                     <Box
                       sx={{
@@ -947,7 +947,7 @@ export default function VideoEditor({ videoUrl, onSave, onCancel }: VideoEditorP
                         width: `${(trimStart / originalDuration) * 100}%`,
                         top: 0,
                         bottom: 0,
-                        bgcolor: 'rgba(0,0,0,0.7)',
+                        bgcolor: isDark ? 'rgba(26, 26, 26, 0.9)' : 'rgba(255, 255, 255, 0.9)',
                         zIndex: 3,
                         pointerEvents: 'none',
                       }}
@@ -961,7 +961,7 @@ export default function VideoEditor({ videoUrl, onSave, onCancel }: VideoEditorP
                         width: `${((originalDuration - trimEnd) / originalDuration) * 100}%`,
                         top: 0,
                         bottom: 0,
-                        bgcolor: 'rgba(0,0,0,0.7)',
+                        bgcolor: isDark ? 'rgba(26, 26, 26, 0.9)' : 'rgba(255, 255, 255, 0.9)',
                         zIndex: 3,
                         pointerEvents: 'none',
                       }}
