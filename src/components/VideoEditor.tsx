@@ -896,7 +896,7 @@ export default function VideoEditor({ videoUrl, onSave, onCancel }: VideoEditorP
                   <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
                     {hasEdits 
                       ? `Finale Länge: ${formatTime(finalDuration)}` 
-                      : 'Ziehe die orangenen Handles zum Kürzen'}
+                      : ''}
                   </Typography>
                   <Tooltip title="Verkleinern">
                     <IconButton size="small" onClick={() => setTimelineZoom(z => Math.max(0.5, z - 0.25))} disabled={timelineZoom <= 0.5}>
