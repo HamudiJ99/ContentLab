@@ -19,6 +19,7 @@ import {
   TextField,
   ToggleButton,
   ToggleButtonGroup,
+  Tooltip,
   Typography,
   useTheme,
 } from '@mui/material';
@@ -31,6 +32,14 @@ import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import PlayCircleOutlineIcon from '@mui/icons-material/PlayCircleOutline';
 import VideocamIcon from '@mui/icons-material/Videocam';
 import ContentCutIcon from '@mui/icons-material/ContentCut';
+import AttachFileIcon from '@mui/icons-material/AttachFile';
+import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
+import DescriptionIcon from '@mui/icons-material/Description';
+import TableChartIcon from '@mui/icons-material/TableChart';
+import SlideshowIcon from '@mui/icons-material/Slideshow';
+import ImageIcon from '@mui/icons-material/Image';
+import DownloadIcon from '@mui/icons-material/Download';
+import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import {
   collection,
@@ -87,6 +96,15 @@ type ChapterMeta = {
   title: string;
 };
 
+type Attachment = {
+  id: string;
+  name: string;
+  url: string;
+  type: string;
+  size: number;
+  uploadedAt: number;
+};
+
 type LessonData = {
   id: string;
   title: string;
@@ -97,6 +115,7 @@ type LessonData = {
   parentLessonId: string | null;
   pdfUrl?: string;
   videoUrl?: string;
+  attachments?: Attachment[];
 };
 
 type LessonFormState = {
@@ -141,6 +160,8 @@ const LessonEditor = () => {
   const [videoUploadMode, setVideoUploadMode] = useState<'upload' | 'record'>('upload');
   const [showVideoRecorder, setShowVideoRecorder] = useState(false);
   const [showVideoEditor, setShowVideoEditor] = useState(false);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [uploadingAttachment, setUploadingAttachment] = useState(false);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
   const [blockedNavigation, setBlockedNavigation] = useState<(() => void) | null>(null);
@@ -302,10 +323,12 @@ const LessonEditor = () => {
             parentLessonId: typeof data.parentLessonId === 'string' ? data.parentLessonId : null,
             pdfUrl: typeof data.pdfUrl === 'string' ? data.pdfUrl : undefined,
             videoUrl: typeof data.videoUrl === 'string' ? data.videoUrl : undefined,
+            attachments: Array.isArray(data.attachments) ? data.attachments : [],
           };
           setLesson(loadedLesson);
           setPdfUrl(loadedLesson.pdfUrl ?? null);
           setVideoUrl(loadedLesson.videoUrl ?? null);
+          setAttachments(loadedLesson.attachments ?? []);
           setLessonForm({
             title: loadedLesson.title,
             shortDescription: loadedLesson.shortDescription,
@@ -395,6 +418,116 @@ const LessonEditor = () => {
     } catch (error) {
       console.error('PDF removal failed:', error);
       setPageError('PDF konnte nicht entfernt werden.');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // Attachment Handlers
+  const getFileIcon = (fileType: string) => {
+    if (fileType.includes('pdf')) return <PictureAsPdfIcon sx={{ color: '#e53935' }} />;
+    if (fileType.includes('word') || fileType.includes('document')) return <DescriptionIcon sx={{ color: '#1976d2' }} />;
+    if (fileType.includes('sheet') || fileType.includes('excel')) return <TableChartIcon sx={{ color: '#2e7d32' }} />;
+    if (fileType.includes('presentation') || fileType.includes('powerpoint')) return <SlideshowIcon sx={{ color: '#ed6c02' }} />;
+    if (fileType.includes('image')) return <ImageIcon sx={{ color: '#9c27b0' }} />;
+    return <InsertDriveFileIcon sx={{ color: 'text.secondary' }} />;
+  };
+
+  const getFileExtension = (fileName: string): string => {
+    const parts = fileName.split('.');
+    return parts.length > 1 ? parts[parts.length - 1].toLowerCase() : '';
+  };
+
+  const formatFileSize = (bytes: number): string => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  };
+
+  const handleAttachmentUpload = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file || !currentUser || !courseId || !chapterId || !lessonId) return;
+
+    const maxSizeInMB = 100;
+    const maxSizeInBytes = maxSizeInMB * 1024 * 1024;
+
+    if (file.size > maxSizeInBytes) {
+      setPageError(`Die Datei ist zu groß. Maximale Größe: ${maxSizeInMB} MB`);
+      return;
+    }
+
+    // Prüfe auf maximale Anzahl von Anhängen
+    if (attachments.length >= 10) {
+      setPageError('Maximale Anzahl von 10 Anhängen erreicht.');
+      return;
+    }
+
+    setUploadingAttachment(true);
+    setPageError(null);
+
+    try {
+      const attachmentId = crypto.randomUUID();
+      const fileExtension = getFileExtension(file.name);
+      const storagePath = `users/${currentUser.uid}/courses/${courseId}/lessons/${lessonId}/attachments/${attachmentId}.${fileExtension}`;
+      const storageRef = ref(storage, storagePath);
+
+      await uploadBytes(storageRef, file);
+      const downloadUrl = await getDownloadURL(storageRef);
+
+      const newAttachment: Attachment = {
+        id: attachmentId,
+        name: file.name,
+        url: downloadUrl,
+        type: file.type,
+        size: file.size,
+        uploadedAt: Date.now(),
+      };
+
+      const updatedAttachments = [...attachments, newAttachment];
+      setAttachments(updatedAttachments);
+
+      // Speichere in Firestore
+      if (lessonRef) {
+        await updateDoc(lessonRef, { attachments: updatedAttachments });
+      }
+
+      setHasUnsavedChanges(false);
+    } catch (error) {
+      console.error('Attachment upload failed:', error);
+      setPageError('Datei konnte nicht hochgeladen werden.');
+    } finally {
+      setUploadingAttachment(false);
+      // Reset input
+      event.target.value = '';
+    }
+  };
+
+  const handleRemoveAttachment = async (attachmentId: string) => {
+    if (!currentUser || !courseId || !lessonId) return;
+
+    const attachment = attachments.find((a) => a.id === attachmentId);
+    if (!attachment) return;
+
+    if (!window.confirm(`"${attachment.name}" wirklich entfernen?`)) return;
+
+    setActionLoading(true);
+    try {
+      // Lösche aus Storage
+      const fileExtension = getFileExtension(attachment.name);
+      const storagePath = `users/${currentUser.uid}/courses/${courseId}/lessons/${lessonId}/attachments/${attachmentId}.${fileExtension}`;
+      const storageRef = ref(storage, storagePath);
+      await deleteObject(storageRef).catch(() => {});
+
+      // Aktualisiere State und Firestore
+      const updatedAttachments = attachments.filter((a) => a.id !== attachmentId);
+      setAttachments(updatedAttachments);
+
+      if (lessonRef) {
+        await updateDoc(lessonRef, { attachments: updatedAttachments });
+      }
+    } catch (error) {
+      console.error('Attachment removal failed:', error);
+      setPageError('Datei konnte nicht entfernt werden.');
     } finally {
       setActionLoading(false);
     }
@@ -1221,6 +1354,148 @@ const LessonEditor = () => {
                   )}
                 </Stack>
               )}
+            </Box>
+          )}
+          {isVideoLesson && (
+            <Box>
+              <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                Zusätzliche Dateien (optional)
+              </Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                Füge ergänzende Materialien hinzu (PDF, Word, Excel, PowerPoint, Bilder etc.)
+              </Typography>
+              
+              {/* Bestehende Anhänge */}
+              {attachments.length > 0 && (
+                <Stack spacing={1.5} sx={{ mb: 2 }}>
+                  {attachments.map((attachment) => (
+                    <Box
+                      key={attachment.id}
+                      sx={{
+                        p: 2,
+                        border: '1px solid',
+                        borderColor: 'divider',
+                        borderRadius: 2,
+                        bgcolor: 'background.paper',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 2,
+                        transition: 'all 0.2s ease',
+                        '&:hover': {
+                          borderColor: 'primary.main',
+                          bgcolor: (theme) => alpha(theme.palette.primary.main, 0.04),
+                        },
+                      }}
+                    >
+                      <Box sx={{ display: 'flex', alignItems: 'center', fontSize: 28 }}>
+                        {getFileIcon(attachment.type)}
+                      </Box>
+                      <Box sx={{ flex: 1, minWidth: 0 }}>
+                        <Typography 
+                          variant="body2" 
+                          fontWeight={600}
+                          sx={{ 
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {attachment.name}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {formatFileSize(attachment.size)}
+                        </Typography>
+                      </Box>
+                      <Stack direction="row" spacing={0.5}>
+                        <Tooltip title="Öffnen">
+                          <IconButton
+                            size="small"
+                            onClick={() => window.open(attachment.url, '_blank')}
+                            sx={{ color: 'primary.main' }}
+                          >
+                            <OpenInNewIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title="Herunterladen">
+                          <IconButton
+                            size="small"
+                            component="a"
+                            href={attachment.url}
+                            download={attachment.name}
+                            target="_blank"
+                            sx={{ color: 'primary.main' }}
+                          >
+                            <DownloadIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title="Entfernen">
+                          <IconButton
+                            size="small"
+                            onClick={() => handleRemoveAttachment(attachment.id)}
+                            disabled={actionLoading}
+                            sx={{ color: 'error.main' }}
+                          >
+                            <DeleteOutlineIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      </Stack>
+                    </Box>
+                  ))}
+                </Stack>
+              )}
+              
+              {/* Upload-Bereich */}
+              <Box
+                sx={{
+                  p: 2.5,
+                  border: '2px dashed',
+                  borderColor: uploadingAttachment ? 'primary.main' : 'divider',
+                  borderRadius: 2,
+                  textAlign: 'center',
+                  bgcolor: uploadingAttachment ? (theme) => alpha(theme.palette.primary.main, 0.04) : 'background.default',
+                  transition: 'all 0.2s ease',
+                  '&:hover': {
+                    borderColor: 'primary.main',
+                    bgcolor: (theme) => alpha(theme.palette.primary.main, 0.04),
+                  },
+                }}
+              >
+                {uploadingAttachment ? (
+                  <Stack alignItems="center" spacing={1}>
+                    <CircularProgress size={32} />
+                    <Typography variant="body2" color="text.secondary">
+                      Datei wird hochgeladen...
+                    </Typography>
+                  </Stack>
+                ) : (
+                  <>
+                    <AttachFileIcon sx={{ fontSize: 40, color: 'text.secondary', mb: 1 }} />
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+                      {attachments.length === 0 
+                        ? 'Noch keine Dateien angehängt'
+                        : `${attachments.length} von 10 Dateien`}
+                    </Typography>
+                    <Button
+                      variant="outlined"
+                      component="label"
+                      startIcon={<AttachFileIcon />}
+                      disabled={attachments.length >= 10}
+                      size="small"
+                    >
+                      Datei anhängen
+                      <input
+                        type="file"
+                        hidden
+                        accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.png,.jpg,.jpeg,.gif,.webp,.txt,.csv,.zip,.rar"
+                        onChange={handleAttachmentUpload}
+                      />
+                    </Button>
+                    <Typography variant="caption" display="block" color="text.secondary" sx={{ mt: 1 }}>
+                      Max. 100 MB pro Datei
+                    </Typography>
+                  </>
+                )}
+              </Box>
             </Box>
           )}
           <Box>

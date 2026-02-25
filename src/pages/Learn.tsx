@@ -38,6 +38,15 @@ import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
+import AttachFileIcon from '@mui/icons-material/AttachFile';
+import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
+import DescriptionIcon from '@mui/icons-material/Description';
+import TableChartIcon from '@mui/icons-material/TableChart';
+import SlideshowIcon from '@mui/icons-material/Slideshow';
+import ImageIcon from '@mui/icons-material/Image';
+import DownloadIcon from '@mui/icons-material/Download';
+import OpenInNewIcon from '@mui/icons-material/OpenInNew';
+import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import { collection, getDocs, doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../firebase/firebaseConfig';
@@ -59,6 +68,15 @@ type Chapter = {
 
 type LessonType = 'video' | 'pdf' | 'text' | 'subchapter';
 
+type Attachment = {
+  id: string;
+  name: string;
+  url: string;
+  type: string;
+  size: number;
+  uploadedAt: number;
+};
+
 type Lesson = {
   id: string;
   chapterId: string;
@@ -70,6 +88,7 @@ type Lesson = {
   pdfUrl?: string;
   videoUrl?: string;
   parentLessonId?: string;
+  attachments?: Attachment[];
 };
 
 type FlatLesson = Lesson & {
@@ -185,6 +204,7 @@ export default function Learn() {
               videoUrl: doc.data().videoUrl,
               status: doc.data().status,
               parentLessonId: doc.data().parentLessonId,
+              attachments: Array.isArray(doc.data().attachments) ? doc.data().attachments : [],
             }))
             .filter((lesson) => lesson.status === 'published')
             .sort((a, b) => a.position - b.position)
@@ -715,6 +735,95 @@ export default function Learn() {
                               }}
                               dangerouslySetInnerHTML={{ __html: currentLesson.content }}
                             />
+                          </Box>
+                        )}
+                        {/* Dateianhänge */}
+                        {currentLesson.attachments && currentLesson.attachments.length > 0 && (
+                          <Box sx={{ mt: 3 }}>
+                            <Typography variant="h6" gutterBottom fontWeight={600}>
+                              <AttachFileIcon sx={{ mr: 1, verticalAlign: 'middle', fontSize: 22 }} />
+                              Zusätzliche Materialien
+                            </Typography>
+                            <Stack spacing={1.5}>
+                              {currentLesson.attachments.map((attachment) => {
+                                const getIcon = () => {
+                                  if (attachment.type.includes('pdf')) return <PictureAsPdfIcon sx={{ color: '#e53935' }} />;
+                                  if (attachment.type.includes('word') || attachment.type.includes('document')) return <DescriptionIcon sx={{ color: '#1976d2' }} />;
+                                  if (attachment.type.includes('sheet') || attachment.type.includes('excel')) return <TableChartIcon sx={{ color: '#2e7d32' }} />;
+                                  if (attachment.type.includes('presentation') || attachment.type.includes('powerpoint')) return <SlideshowIcon sx={{ color: '#ed6c02' }} />;
+                                  if (attachment.type.includes('image')) return <ImageIcon sx={{ color: '#9c27b0' }} />;
+                                  return <InsertDriveFileIcon sx={{ color: 'text.secondary' }} />;
+                                };
+                                const formatSize = (bytes: number) => {
+                                  if (bytes < 1024) return `${bytes} B`;
+                                  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+                                  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+                                };
+                                return (
+                                  <Paper
+                                    key={attachment.id}
+                                    elevation={0}
+                                    sx={{
+                                      p: 2,
+                                      border: '1px solid',
+                                      borderColor: 'divider',
+                                      borderRadius: 2,
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: 2,
+                                      transition: 'all 0.2s ease',
+                                      '&:hover': {
+                                        borderColor: 'primary.main',
+                                        bgcolor: (theme) => alpha(theme.palette.primary.main, 0.04),
+                                      },
+                                    }}
+                                  >
+                                    <Box sx={{ display: 'flex', alignItems: 'center', fontSize: 28 }}>
+                                      {getIcon()}
+                                    </Box>
+                                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                                      <Typography 
+                                        variant="body2" 
+                                        fontWeight={600}
+                                        sx={{ 
+                                          overflow: 'hidden',
+                                          textOverflow: 'ellipsis',
+                                          whiteSpace: 'nowrap',
+                                        }}
+                                      >
+                                        {attachment.name}
+                                      </Typography>
+                                      <Typography variant="caption" color="text.secondary">
+                                        {formatSize(attachment.size)}
+                                      </Typography>
+                                    </Box>
+                                    <Stack direction="row" spacing={0.5}>
+                                      <Tooltip title="Öffnen">
+                                        <IconButton
+                                          size="small"
+                                          onClick={() => window.open(attachment.url, '_blank')}
+                                          sx={{ color: 'primary.main' }}
+                                        >
+                                          <OpenInNewIcon fontSize="small" />
+                                        </IconButton>
+                                      </Tooltip>
+                                      <Tooltip title="Herunterladen">
+                                        <IconButton
+                                          size="small"
+                                          component="a"
+                                          href={attachment.url}
+                                          download={attachment.name}
+                                          target="_blank"
+                                          sx={{ color: 'primary.main' }}
+                                        >
+                                          <DownloadIcon fontSize="small" />
+                                        </IconButton>
+                                      </Tooltip>
+                                    </Stack>
+                                  </Paper>
+                                );
+                              })}
+                            </Stack>
                           </Box>
                         )}
                       </Stack>
