@@ -15,6 +15,10 @@ import {
   Skeleton,
   Chip,
   Avatar,
+  Menu,
+  MenuItem,
+  ListItemIcon,
+  ListItemText,
 } from '@mui/material';
 import { getLuminance, lighten, darken } from '@mui/system';
 import CloseIcon from '@mui/icons-material/Close';
@@ -43,6 +47,8 @@ import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import EmojiEventsIcon from '@mui/icons-material/EmojiEvents';
 import FolderOffIcon from '@mui/icons-material/FolderOff';
 import PersonAddIcon from '@mui/icons-material/PersonAdd';
+import FilterListIcon from '@mui/icons-material/FilterList';
+import CheckIcon from '@mui/icons-material/Check';
 
 // Types
 type NewsSettings = {
@@ -152,6 +158,8 @@ export default function Home() {
     const saved = localStorage.getItem('newsSettings');
     return saved ? { ...DEFAULT_NEWS_SETTINGS, ...JSON.parse(saved) } : DEFAULT_NEWS_SETTINGS;
   });
+  const [courseFilterAnchor, setCourseFilterAnchor] = useState<null | HTMLElement>(null);
+  const [courseSortBy, setCourseSortBy] = useState<'progress' | 'completed-first' | 'newest' | 'highest-progress' | 'lowest-progress'>('progress');
   const [stats, setStats] = useState({
     totalCourses: 0,
     completedCourses: 0,
@@ -169,6 +177,35 @@ export default function Home() {
     }
     return courses[0] || null;
   }, [courses]);
+
+  const sortedCourses = useMemo(() => {
+    const sorted = [...courses];
+    switch (courseSortBy) {
+      case 'completed-first':
+        return sorted.sort((a, b) => {
+          if (a.progress === 100 && b.progress !== 100) return -1;
+          if (a.progress !== 100 && b.progress === 100) return 1;
+          return b.progress - a.progress;
+        });
+      case 'newest':
+        return sorted.sort((a, b) => {
+          const timeA = a.createdAt?.getTime() || 0;
+          const timeB = b.createdAt?.getTime() || 0;
+          return timeB - timeA;
+        });
+      case 'highest-progress':
+        return sorted.sort((a, b) => b.progress - a.progress);
+      case 'lowest-progress':
+        return sorted.sort((a, b) => a.progress - b.progress);
+      case 'progress':
+      default:
+        return sorted.sort((a, b) => {
+          if (a.progress > 0 && a.progress < 100 && (b.progress === 0 || b.progress === 100)) return -1;
+          if (b.progress > 0 && b.progress < 100 && (a.progress === 0 || a.progress === 100)) return 1;
+          return b.progress - a.progress;
+        });
+    }
+  }, [courses, courseSortBy]);
 
   const completionRate = useMemo(() => {
     if (stats.totalCourses === 0) return 0;
@@ -1070,18 +1107,93 @@ export default function Home() {
                     Deine Kurse
                   </Typography>
                 </Stack>
-                <Button size="small" endIcon={<ArrowForwardIcon />} onClick={() => navigate('/courses')} sx={{ textTransform: 'none' }}>
-                  Alle anzeigen
-                </Button>
+                <Stack direction="row" spacing={1} alignItems="center">
+                  <Tooltip title="Sortierung">
+                    <IconButton
+                      size="small"
+                      onClick={(e) => setCourseFilterAnchor(e.currentTarget)}
+                      sx={{ opacity: 0.7, '&:hover': { opacity: 1 } }}
+                    >
+                      <FilterListIcon sx={{ fontSize: 20 }} />
+                    </IconButton>
+                  </Tooltip>
+                  <Button size="small" endIcon={<ArrowForwardIcon />} onClick={() => navigate('/courses')} sx={{ textTransform: 'none' }}>
+                    Alle anzeigen
+                  </Button>
+                </Stack>
               </Stack>
+
+              <Menu
+                anchorEl={courseFilterAnchor}
+                open={Boolean(courseFilterAnchor)}
+                onClose={() => setCourseFilterAnchor(null)}
+                anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+                transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+              >
+                <MenuItem
+                  onClick={() => {
+                    setCourseSortBy('progress');
+                    setCourseFilterAnchor(null);
+                  }}
+                >
+                  <ListItemIcon>
+                    {courseSortBy === 'progress' && <CheckIcon fontSize="small" />}
+                  </ListItemIcon>
+                  <ListItemText>In Bearbeitung zuerst</ListItemText>
+                </MenuItem>
+                <MenuItem
+                  onClick={() => {
+                    setCourseSortBy('completed-first');
+                    setCourseFilterAnchor(null);
+                  }}
+                >
+                  <ListItemIcon>
+                    {courseSortBy === 'completed-first' && <CheckIcon fontSize="small" />}
+                  </ListItemIcon>
+                  <ListItemText>Abgeschlossene zuerst</ListItemText>
+                </MenuItem>
+                <MenuItem
+                  onClick={() => {
+                    setCourseSortBy('newest');
+                    setCourseFilterAnchor(null);
+                  }}
+                >
+                  <ListItemIcon>
+                    {courseSortBy === 'newest' && <CheckIcon fontSize="small" />}
+                  </ListItemIcon>
+                  <ListItemText>Zuletzt hinzugefügt</ListItemText>
+                </MenuItem>
+                <MenuItem
+                  onClick={() => {
+                    setCourseSortBy('highest-progress');
+                    setCourseFilterAnchor(null);
+                  }}
+                >
+                  <ListItemIcon>
+                    {courseSortBy === 'highest-progress' && <CheckIcon fontSize="small" />}
+                  </ListItemIcon>
+                  <ListItemText>Höchster Fortschritt</ListItemText>
+                </MenuItem>
+                <MenuItem
+                  onClick={() => {
+                    setCourseSortBy('lowest-progress');
+                    setCourseFilterAnchor(null);
+                  }}
+                >
+                  <ListItemIcon>
+                    {courseSortBy === 'lowest-progress' && <CheckIcon fontSize="small" />}
+                  </ListItemIcon>
+                  <ListItemText>Niedrigster Fortschritt</ListItemText>
+                </MenuItem>
+              </Menu>
 
               {loading ? (
                 <Stack spacing={2}>
                   {[1, 2, 3].map(i => <Skeleton key={i} variant="rounded" height={70} sx={{ borderRadius: 2 }} />)}
                 </Stack>
-              ) : courses.length > 0 ? (
+              ) : sortedCourses.length > 0 ? (
                 <Stack spacing={1.5}>
-                  {courses.slice(0, 4).map((course) => (
+                  {sortedCourses.slice(0, 4).map((course) => (
                     <Paper
                       key={course.id}
                       elevation={0}
