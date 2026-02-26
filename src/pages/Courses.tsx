@@ -680,6 +680,20 @@ const Courses = () => {
     if (!currentUser) {
       return;
     }
+    
+    // Finde den Kurs um den Namen anzuzeigen
+    const courseToDelete = coursesRef.current.find(c => c.id === id);
+    const courseName = courseToDelete?.title || 'diesen Kurs';
+    
+    // Bestätigung anfordern
+    const confirmed = window.confirm(
+      `Möchtest du "${courseName}" wirklich löschen?\n\nAlle Kapitel, Lektionen und Inhalte werden unwiderruflich gelöscht.`
+    );
+    
+    if (!confirmed) {
+      return;
+    }
+    
     let updatedCourses: Course[] = coursesRef.current;
     updateCourses((prev) => {
       updatedCourses = prev.filter((course) => course.id !== id);

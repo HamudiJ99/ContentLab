@@ -191,7 +191,8 @@ export default function CourseCard({
         transformOrigin={{ horizontal: 'right', vertical: 'top' }}
       >
         <MenuItem
-          onClick={() => {
+          onClick={(event) => {
+            event.stopPropagation();
             handleMenuClose();
             onEdit?.();
           }}
@@ -199,7 +200,8 @@ export default function CourseCard({
           Bearbeiten
         </MenuItem>
         <MenuItem
-          onClick={() => {
+          onClick={(event) => {
+            event.stopPropagation();
             handleMenuClose();
             onDelete?.();
           }}
