@@ -342,6 +342,7 @@ export default function Learn() {
           completedLessons: Array.from(newCompleted),
           lastAccessedAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
+          [`lessonCompletedAt.${currentLessonId}`]: serverTimestamp(),
         },
         { merge: true }
       );
@@ -362,24 +363,27 @@ export default function Learn() {
     if (!currentUser || !courseId) return;
 
     const newCompleted = new Set(completedLessons);
-    if (newCompleted.has(lessonId)) {
-      newCompleted.delete(lessonId);
-    } else {
+    const isCompleting = !newCompleted.has(lessonId);
+    if (isCompleting) {
       newCompleted.add(lessonId);
+    } else {
+      newCompleted.delete(lessonId);
     }
     setCompletedLessons(newCompleted);
 
     try {
       const progressRef = doc(db, 'users', currentUser.uid, 'courseProgress', courseId);
-      await setDoc(
-        progressRef,
-        {
-          completedLessons: Array.from(newCompleted),
-          lastAccessedAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        },
-        { merge: true }
-      );
+      const updateData: Record<string, unknown> = {
+        completedLessons: Array.from(newCompleted),
+        lastAccessedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      };
+      
+      if (isCompleting) {
+        updateData[`lessonCompletedAt.${lessonId}`] = serverTimestamp();
+      }
+      
+      await setDoc(progressRef, updateData, { merge: true });
     } catch (err) {
       console.error('Fehler beim Speichern:', err);
     }

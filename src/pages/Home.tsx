@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Box,
@@ -11,13 +11,22 @@ import {
   useTheme,
   alpha,
   Paper,
-  IconButton,
-  Grid
+  Grid,
+  Skeleton,
+  Chip,
+  Avatar,
 } from '@mui/material';
-import { getLuminance } from '@mui/system';
+import { getLuminance, lighten, darken } from '@mui/system';
+import CloseIcon from '@mui/icons-material/Close';
+import MailOutlineIcon from '@mui/icons-material/MailOutline';
+import NotificationsNoneIcon from '@mui/icons-material/NotificationsNone';
+import IconButton from '@mui/material/IconButton';
+import Tooltip from '@mui/material/Tooltip';
 import { onAuthStateChanged, type User } from 'firebase/auth';
-import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
+import { collection, getDocs, doc, getDoc, query, where } from 'firebase/firestore';
 import { auth, db } from '../firebase/firebaseConfig';
+
+// Icons
 import SchoolIcon from '@mui/icons-material/School';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import AutoStoriesIcon from '@mui/icons-material/AutoStories';
@@ -25,103 +34,179 @@ import VideocamIcon from '@mui/icons-material/Videocam';
 import GroupsIcon from '@mui/icons-material/Groups';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
-import LocalFireDepartmentIcon from '@mui/icons-material/LocalFireDepartment';
 import AddIcon from '@mui/icons-material/Add';
 import TimelineIcon from '@mui/icons-material/Timeline';
+import WarningAmberIcon from '@mui/icons-material/WarningAmber';
+import TrendingUpIcon from '@mui/icons-material/TrendingUp';
+import EditNoteIcon from '@mui/icons-material/EditNote';
+import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
+import EmojiEventsIcon from '@mui/icons-material/EmojiEvents';
+import FolderOffIcon from '@mui/icons-material/FolderOff';
+import PersonAddIcon from '@mui/icons-material/PersonAdd';
+
+// Types
+type NewsSettings = {
+  course_completed: boolean;
+  course_created: boolean;
+  invitation_received: boolean;
+  lesson_completed: boolean;
+  member_added: boolean;
+};
+
+type DismissedActivities = Record<string, number>; // ID -> dismissed timestamp
+
+const DEFAULT_NEWS_SETTINGS: NewsSettings = {
+  course_completed: true,
+  course_created: true,
+  invitation_received: true,
+  lesson_completed: false,
+  member_added: false,
+};
 
 type Course = {
   id: string;
   title: string;
   description: string;
   thumbnailUrl?: string;
+  coverColor?: string;
   category: string;
-  progress?: number;
-  lessonsCount?: number;
-  createdBy?: string;
+  progress: number;
+  lessonsCount: number;
+  chaptersCount: number;
+  draftLessons: number;
+  createdAt?: Date;
+};
+
+type ActivityItem = {
+  id: string;
+  type: 'lesson_completed' | 'course_created' | 'course_completed' | 'lesson_created' | 'invitation_received' | 'member_added';
+  title: string;
+  subtitle: string;
+  timestamp: Date;
+  icon: 'check' | 'add' | 'trophy' | 'edit' | 'mail' | 'person';
+  courseId?: string;
+  ownerId?: string;
+};
+
+type AttentionItem = {
+  id: string;
+  type: 'empty_course' | 'draft_lessons' | 'inactive_course';
+  title: string;
+  description: string;
+  courseId: string;
+  severity: 'warning' | 'info';
+  action: string;
+};
+
+// Utility Functions
+const getTimeAgo = (date: Date): string => {
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMs / 3600000);
+  const diffDays = Math.floor(diffMs / 86400000);
+
+  if (diffMins < 1) return 'Gerade eben';
+  if (diffMins < 60) return `vor ${diffMins} Min.`;
+  if (diffHours < 24) return `vor ${diffHours} Std.`;
+  if (diffDays < 7) return `vor ${diffDays} Tagen`;
+  return date.toLocaleDateString('de-DE', { day: '2-digit', month: 'short' });
+};
+
+const getGreeting = (): string => {
+  const hour = new Date().getHours();
+  if (hour < 12) return 'Guten Morgen';
+  if (hour < 18) return 'Guten Tag';
+  return 'Guten Abend';
 };
 
 export default function Home() {
   const theme = useTheme();
   const navigate = useNavigate();
+  const primaryColor = theme.palette.primary.main;
+  const isDark = theme.palette.mode === 'dark';
+
+  // State
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-  const [recentCourses, setRecentCourses] = useState<Course[]>([]);
-  const [stats, setStats] = useState({ courses: 0, lessons: 0, members: 0 });
-
-  // Funktion zur Aufhellung der Farbe
-  const getLighterColor = (color: string): string => {
-    // Konvertiere Hex zu RGB
-    const hex = color.replace('#', '');
-    const r = parseInt(hex.substr(0, 2), 16) / 255;
-    const g = parseInt(hex.substr(2, 2), 16) / 255;
-    const b = parseInt(hex.substr(4, 2), 16) / 255;
-
-    // Konvertiere RGB zu HSL
-    const max = Math.max(r, g, b);
-    const min = Math.min(r, g, b);
-    let h = 0;
-    let l = (max + min) / 2;
-    const s = max === min ? 0 : l > 0.5 ? (max - min) / (2 - max - min) : (max - min) / (max + min);
-
-    if (max !== min) {
-      if (max === r) h = ((g - b) / (max - min) + (g < b ? 6 : 0)) / 6;
-      else if (max === g) h = ((b - r) / (max - min) + 2) / 6;
-      else h = ((r - g) / (max - min) + 4) / 6;
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [activities, setActivities] = useState<ActivityItem[]>([]);
+  const [attentionItems, setAttentionItems] = useState<AttentionItem[]>([]);
+  const [dismissedActivities, setDismissedActivities] = useState<DismissedActivities>(() => {
+    const saved = localStorage.getItem('dismissedActivities');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        // Migration: If old format (array), convert to empty object
+        if (Array.isArray(parsed)) {
+          return {};
+        }
+        return parsed;
+      } catch {
+        return {};
+      }
     }
+    return {};
+  });
+  const [newsSettings] = useState<NewsSettings>(() => {
+    const saved = localStorage.getItem('newsSettings');
+    return saved ? { ...DEFAULT_NEWS_SETTINGS, ...JSON.parse(saved) } : DEFAULT_NEWS_SETTINGS;
+  });
+  const [stats, setStats] = useState({
+    totalCourses: 0,
+    completedCourses: 0,
+    totalLessons: 0,
+    completedLessons: 0,
+    avgProgress: 0,
+    weeklyActivity: 0,
+  });
 
-    // Erhöhe Lightness um 25%
-    l = Math.min(1, l + 0.25);
+  // Derived values
+  const currentCourse = useMemo(() => {
+    const inProgress = courses.filter(c => c.progress > 0 && c.progress < 100);
+    if (inProgress.length > 0) {
+      return inProgress.sort((a, b) => b.progress - a.progress)[0];
+    }
+    return courses[0] || null;
+  }, [courses]);
 
-    // Konvertiere HSL zurück zu RGB
-    const hue2rgb = (p: number, q: number, t: number) => {
-      if (t < 0) t += 1;
-      if (t > 1) t -= 1;
-      if (t < 1 / 6) return p + (q - p) * 6 * t;
-      if (t < 1 / 2) return q;
-      if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
-      return p;
-    };
+  const completionRate = useMemo(() => {
+    if (stats.totalCourses === 0) return 0;
+    return Math.round((stats.completedCourses / stats.totalCourses) * 100);
+  }, [stats]);
 
-    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-    const p = 2 * l - q;
-    const rNew = Math.round(hue2rgb(p, q, h + 1 / 3) * 255);
-    const gNew = Math.round(hue2rgb(p, q, h) * 255);
-    const bNew = Math.round(hue2rgb(p, q, h - 1 / 3) * 255);
-
-    return `#${((1 << 24) + (rNew << 16) + (gNew << 8) + bNew).toString(16).slice(1)}`;
+  // Color utilities
+  const getContrastColor = (bgColor: string): string => {
+    const lum = getLuminance(bgColor);
+    return lum > 0.5 ? '#000000' : '#ffffff';
   };
 
+  const getLighterColor = (color: string): string => {
+    const lum = getLuminance(color);
+    if (isDark) {
+      return lum < 0.3 ? lighten(color, 0.3) : color;
+    }
+    return lum > 0.7 ? darken(color, 0.2) : lighten(color, 0.2);
+  };
+
+  // Data loading
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       if (currentUser) {
         loadUserData(currentUser.uid);
       } else {
-        // Lade Statistiken auch für nicht-eingeloggte Benutzer
-        loadPublicStats();
+        setLoading(false);
       }
     });
     return () => unsubscribe();
   }, []);
 
-  const loadPublicStats = async () => {
-    try {
-      const usersSnapshot = await getDocs(collection(db, 'users'));
-      setStats({
-        courses: 0,
-        lessons: 0,
-        members: usersSnapshot.size,
-      });
-    } catch (error) {
-      console.error('Fehler beim Laden der öffentlichen Statistiken:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const loadUserData = async (userId: string) => {
     try {
-      // Lade ausgeblendete Kurse
+      setLoading(true);
+
+      // Load hidden courses
       const hiddenCoursesSnapshot = await getDocs(
         collection(db, 'users', userId, 'hiddenCourses')
       );
@@ -133,22 +218,20 @@ export default function Home() {
         }
       });
 
-      // Lade Kurse des Benutzers (selbst erstellt)
+      // Load user's courses
       const coursesRef = collection(db, 'users', userId, 'courses');
       const coursesSnapshot = await getDocs(coursesRef);
-      
+
       const coursesData: Course[] = [];
-      let totalLessons = 0;
+      const attentionData: AttentionItem[] = [];
+      const activityData: ActivityItem[] = [];
+      let totalLessonsCount = 0;
+      let completedLessonsCount = 0;
 
       for (const courseDoc of coursesSnapshot.docs) {
+        if (hiddenCourseIds.has(courseDoc.id)) continue;
+
         const courseData = courseDoc.data();
-        
-        // Überspringe ausgeblendete Kurse
-        if (hiddenCourseIds.has(courseDoc.id)) {
-          continue;
-        }
-        
-        // Lade alle Kapitel und zähle veröffentlichte Lektionen
         const chaptersSnapshot = await getDocs(
           collection(db, 'users', userId, 'courses', courseDoc.id, 'chapters')
         );
@@ -157,68 +240,136 @@ export default function Home() {
           (doc) => doc.data().status === 'published'
         );
 
-        if (publishedChapters.length === 0) continue;
-
         let publishedLessons = 0;
-        for (const chapterDoc of publishedChapters) {
-          const lessonsSnapshot = await getDocs(
-            collection(chapterDoc.ref, 'lessons')
-          );
-          publishedLessons += lessonsSnapshot.docs.filter(
-            (doc) => doc.data().status === 'published' && doc.data().type !== 'subchapter'
-          ).length;
-        }
-
-        if (publishedLessons === 0) continue;
-
-        totalLessons += publishedLessons;
-
-        // Sammle alle IDs der veröffentlichten Lektionen
+        let draftLessons = 0;
         const publishedLessonIds: string[] = [];
-        for (const chapterDoc of publishedChapters) {
-          const lessonsSnapshot = await getDocs(
-            collection(chapterDoc.ref, 'lessons')
-          );
+        const lessonTitles: Record<string, string> = {};
+
+        for (const chapterDoc of chaptersSnapshot.docs) {
+          const lessonsSnapshot = await getDocs(collection(chapterDoc.ref, 'lessons'));
+          
           lessonsSnapshot.docs.forEach((lessonDoc) => {
             const lessonData = lessonDoc.data();
-            if (lessonData.status === 'published' && lessonData.type !== 'subchapter') {
-              publishedLessonIds.push(lessonDoc.id);
+            if (lessonData.type !== 'subchapter') {
+              if (lessonData.status === 'published') {
+                publishedLessons++;
+                publishedLessonIds.push(lessonDoc.id);
+                lessonTitles[lessonDoc.id] = lessonData.title || 'Unbenannte Lektion';
+              } else if (lessonData.status === 'draft') {
+                draftLessons++;
+              }
             }
           });
         }
 
-        // Lade Fortschritt für diesen Kurs
+        totalLessonsCount += publishedLessons;
+
+        // Load progress for this course
         const progressDoc = await getDoc(
           doc(db, 'users', userId, 'courseProgress', courseDoc.id)
         );
 
         let progress = 0;
+        let completedCount = 0;
         if (progressDoc.exists()) {
           const progressData = progressDoc.data();
-          // Filtere completedLessons: Behalte nur IDs, die in publishedLessonIds existieren
-          const validCompletedLessons = Array.isArray(progressData.completedLessons)
+          const validCompleted = Array.isArray(progressData.completedLessons)
             ? progressData.completedLessons.filter((id: string) => publishedLessonIds.includes(id))
             : [];
-          const completedCount = validCompletedLessons.length;
-          
+          completedCount = validCompleted.length;
+          completedLessonsCount += completedCount;
+
           if (publishedLessons > 0) {
             progress = Math.round((completedCount / publishedLessons) * 100);
           }
+
+          // Load lesson completed activities
+          const lessonCompletedAt = progressData.lessonCompletedAt;
+          if (lessonCompletedAt && typeof lessonCompletedAt === 'object') {
+            Object.entries(lessonCompletedAt).forEach(([lessonId, timestamp]) => {
+              if (publishedLessonIds.includes(lessonId) && timestamp) {
+                const ts = (timestamp as { toDate?: () => Date });
+                activityData.push({
+                  id: `lesson-${courseDoc.id}-${lessonId}`,
+                  type: 'lesson_completed',
+                  title: `"${lessonTitles[lessonId] || 'Lektion'}" abgeschlossen`,
+                  subtitle: courseData.title || 'Kurs',
+                  timestamp: ts.toDate?.() || new Date(),
+                  icon: 'check',
+                  courseId: courseDoc.id,
+                });
+              }
+            });
+          }
         }
 
-        coursesData.push({
+        const course: Course = {
           id: courseDoc.id,
           title: courseData.title || 'Unbenannter Kurs',
           description: courseData.description || '',
           thumbnailUrl: courseData.coverImageUrl,
+          coverColor: courseData.coverColor,
           category: courseData.category || 'Allgemein',
           lessonsCount: publishedLessons,
-          createdBy: courseData.createdBy,
+          chaptersCount: publishedChapters.length,
+          draftLessons,
           progress,
-        });
+          createdAt: courseData.createdAt?.toDate?.(),
+        };
+
+        coursesData.push(course);
+
+        // Check for attention items
+        if (publishedLessons === 0 && chaptersSnapshot.docs.length > 0) {
+          attentionData.push({
+            id: `empty-${courseDoc.id}`,
+            type: 'empty_course',
+            title: course.title,
+            description: 'Dieser Kurs hat noch keine veröffentlichten Lektionen',
+            courseId: courseDoc.id,
+            severity: 'warning',
+            action: 'Inhalt hinzufügen',
+          });
+        }
+
+        if (draftLessons > 0) {
+          attentionData.push({
+            id: `draft-${courseDoc.id}`,
+            type: 'draft_lessons',
+            title: course.title,
+            description: `${draftLessons} Lektion${draftLessons > 1 ? 'en' : ''} im Entwurf`,
+            courseId: courseDoc.id,
+            severity: 'info',
+            action: 'Veröffentlichen',
+          });
+        }
+
+        // Add to activity (course created)
+        if (courseData.createdAt) {
+          activityData.push({
+            id: `created-${courseDoc.id}`,
+            type: 'course_created',
+            title: `Kurs "${course.title}" erstellt`,
+            subtitle: course.category,
+            timestamp: courseData.createdAt.toDate?.() || new Date(),
+            icon: 'add',
+          });
+        }
+
+        // Course completed
+        if (progress === 100) {
+          activityData.push({
+            id: `completed-${courseDoc.id}`,
+            type: 'course_completed',
+            title: `"${course.title}" abgeschlossen`,
+            subtitle: `${publishedLessons} Lektionen`,
+            timestamp: progressDoc.data()?.lastAccessedAt?.toDate?.() || new Date(),
+            icon: 'trophy',
+          });
+        }
       }
 
-      // Lade auch enrolled Kurse (Einladungen)
+      // Load enrolled courses
       const enrollmentsSnapshot = await getDocs(
         collection(db, 'users', userId, 'enrollments')
       );
@@ -228,15 +379,9 @@ export default function Home() {
         const ownerId = enrollmentData.ownerId;
         const courseId = enrollmentDoc.id;
 
-        // Überspringe ausgeblendete Kurse
-        if (hiddenCourseIds.has(courseId)) {
-          continue;
-        }
-
-        if (!ownerId) continue;
+        if (hiddenCourseIds.has(courseId) || !ownerId) continue;
 
         try {
-          // Lade den Kurs vom Owner
           const courseDocSnapshot = await getDoc(
             doc(db, 'users', ownerId, 'courses', courseId)
           );
@@ -244,8 +389,6 @@ export default function Home() {
           if (!courseDocSnapshot.exists()) continue;
 
           const courseData = courseDocSnapshot.data();
-
-          // Lade alle Kapitel und zähle veröffentlichte Lektionen
           const chaptersSnapshot = await getDocs(
             collection(db, 'users', ownerId, 'courses', courseId, 'chapters')
           );
@@ -257,34 +400,23 @@ export default function Home() {
           if (publishedChapters.length === 0) continue;
 
           let publishedLessons = 0;
-          for (const chapterDoc of publishedChapters) {
-            const lessonsSnapshot = await getDocs(
-              collection(chapterDoc.ref, 'lessons')
-            );
-            publishedLessons += lessonsSnapshot.docs.filter(
-              (doc) => doc.data().status === 'published' && doc.data().type !== 'subchapter'
-            ).length;
-          }
-
-          if (publishedLessons === 0) continue;
-
-          totalLessons += publishedLessons;
-
-          // Sammle alle IDs der veröffentlichten Lektionen
           const publishedLessonIds: string[] = [];
+
           for (const chapterDoc of publishedChapters) {
-            const lessonsSnapshot = await getDocs(
-              collection(chapterDoc.ref, 'lessons')
-            );
+            const lessonsSnapshot = await getDocs(collection(chapterDoc.ref, 'lessons'));
             lessonsSnapshot.docs.forEach((lessonDoc) => {
               const lessonData = lessonDoc.data();
               if (lessonData.status === 'published' && lessonData.type !== 'subchapter') {
+                publishedLessons++;
                 publishedLessonIds.push(lessonDoc.id);
               }
             });
           }
 
-          // Lade Fortschritt für diesen enrolled Kurs
+          if (publishedLessons === 0) continue;
+
+          totalLessonsCount += publishedLessons;
+
           const progressDoc = await getDoc(
             doc(db, 'users', userId, 'courseProgress', courseId)
           );
@@ -292,14 +424,13 @@ export default function Home() {
           let progress = 0;
           if (progressDoc.exists()) {
             const progressData = progressDoc.data();
-            // Filtere completedLessons: Behalte nur IDs, die in publishedLessonIds existieren
-            const validCompletedLessons = Array.isArray(progressData.completedLessons)
+            const validCompleted = Array.isArray(progressData.completedLessons)
               ? progressData.completedLessons.filter((id: string) => publishedLessonIds.includes(id))
               : [];
-            const completedCount = validCompletedLessons.length;
-            
+            completedLessonsCount += validCompleted.length;
+
             if (publishedLessons > 0) {
-              progress = Math.round((completedCount / publishedLessons) * 100);
+              progress = Math.round((validCompleted.length / publishedLessons) * 100);
             }
           }
 
@@ -308,44 +439,124 @@ export default function Home() {
             title: courseData.title || 'Unbenannter Kurs',
             description: courseData.description || '',
             thumbnailUrl: courseData.coverImageUrl,
+            coverColor: courseData.coverColor,
             category: courseData.category || 'Allgemein',
             lessonsCount: publishedLessons,
-            createdBy: courseData.createdBy,
+            chaptersCount: publishedChapters.length,
+            draftLessons: 0,
             progress,
+            createdAt: courseData.createdAt?.toDate?.(),
           });
         } catch (error) {
           console.error('Fehler beim Laden des enrolled Kurses:', error);
         }
       }
 
-      setRecentCourses(coursesData);
-
-      // Setze Statistiken (ohne globale User-Anzahl wegen Permissions)
-      setStats({
-        courses: coursesData.length,
-        lessons: totalLessons,
-        members: 1, // Aktueller Benutzer
+      // Sort courses
+      coursesData.sort((a, b) => {
+        if (a.progress > 0 && a.progress < 100 && (b.progress === 0 || b.progress === 100)) return -1;
+        if (b.progress > 0 && b.progress < 100 && (a.progress === 0 || a.progress === 100)) return 1;
+        return b.progress - a.progress;
       });
+
+      // Load course invitations (pending = received, accepted = member_added)
+      if (auth.currentUser?.email) {
+        const normalizedEmail = auth.currentUser.email.toLowerCase();
+        
+        // Pending invitations for current user
+        const invitationsQuery = query(
+          collection(db, 'courseInvitations'),
+          where('inviteeEmail', '==', normalizedEmail)
+        );
+        const invitationsSnapshot = await getDocs(invitationsQuery);
+        
+        invitationsSnapshot.docs.forEach((invDoc) => {
+          const invData = invDoc.data();
+          if (invData.status === 'pending' && invData.createdAt) {
+            activityData.push({
+              id: `invitation-${invDoc.id}`,
+              type: 'invitation_received',
+              title: `Einladung zu "${invData.courseTitle || 'Kurs'}"`,
+              subtitle: invData.ownerName ? `von ${invData.ownerName}` : 'Neue Kurseinladung',
+              timestamp: invData.createdAt.toDate?.() || new Date(),
+              icon: 'mail',
+              courseId: invData.courseId,
+              ownerId: invData.ownerId,
+            });
+          }
+        });
+
+        // Accepted invitations where current user is the owner (member_added)
+        const acceptedInvitationsQuery = query(
+          collection(db, 'courseInvitations'),
+          where('ownerId', '==', userId),
+          where('status', '==', 'accepted')
+        );
+        const acceptedSnapshot = await getDocs(acceptedInvitationsQuery);
+        
+        acceptedSnapshot.docs.forEach((invDoc) => {
+          const invData = invDoc.data();
+          if (invData.acceptedAt) {
+            activityData.push({
+              id: `member-${invDoc.id}`,
+              type: 'member_added',
+              title: `Neues Mitglied in "${invData.courseTitle || 'Kurs'}"`,
+              subtitle: invData.inviteeEmail || 'Einladung angenommen',
+              timestamp: invData.acceptedAt.toDate?.() || new Date(),
+              icon: 'person',
+              courseId: invData.courseId,
+            });
+          }
+        });
+      }
+
+      activityData.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+
+      setCourses(coursesData);
+      setAttentionItems(attentionData.slice(0, 3));
+      setActivities(activityData.slice(0, 8));
+
+      const completedCourses = coursesData.filter(c => c.progress === 100).length;
+      const avgProgress = coursesData.length > 0
+        ? Math.round(coursesData.reduce((sum, c) => sum + c.progress, 0) / coursesData.length)
+        : 0;
+
+      setStats({
+        totalCourses: coursesData.length,
+        completedCourses,
+        totalLessons: totalLessonsCount,
+        completedLessons: completedLessonsCount,
+        avgProgress,
+        weeklyActivity: activityData.filter(a => {
+          const weekAgo = new Date();
+          weekAgo.setDate(weekAgo.getDate() - 7);
+          return a.timestamp > weekAgo;
+        }).length,
+      });
+
     } catch (error) {
-      console.error('Fehler beim Laden der Daten:', error);
+      console.error('Error loading data:', error);
     } finally {
       setLoading(false);
     }
   };
 
+  // ============================================
+  // LANDING PAGE (Not logged in)
+  // ============================================
   if (!user) {
-    // Landing Page für nicht-eingeloggte Benutzer
     return (
       <Box sx={{ p: { xs: 2, md: 4 }, maxWidth: 1160, mx: 'auto', width: '100%' }}>
-        {/* Hero Section mit Gradient Background */}
         <Paper
           elevation={0}
           sx={{
-            background: `linear-gradient(135deg, ${alpha(theme.palette.primary.main, 0.05)}, ${alpha(theme.palette.secondary.main, 0.05)})`,
+            background: `linear-gradient(135deg, ${alpha(primaryColor, 0.08)}, ${alpha(primaryColor, 0.02)})`,
             borderRadius: 4,
             p: { xs: 4, md: 8 },
             mb: 6,
             textAlign: 'center',
+            border: '1px solid',
+            borderColor: alpha(primaryColor, 0.1),
           }}
         >
           <Box sx={{ display: 'flex', justifyContent: 'center', mb: 3 }}>
@@ -353,121 +564,50 @@ export default function Home() {
               sx={{
                 width: 80,
                 height: 80,
-                borderRadius: '50%',
-                background: `linear-gradient(135deg, ${theme.palette.primary.main}, ${theme.palette.secondary.main})`,
+                borderRadius: '24px',
+                background: `linear-gradient(135deg, ${primaryColor}, ${getLighterColor(primaryColor)})`,
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
+                boxShadow: `0 8px 32px ${alpha(primaryColor, 0.3)}`,
               }}
             >
-              <SchoolIcon sx={{ fontSize: 48, color: 'white' }} />
+              <SchoolIcon sx={{ fontSize: 42, color: getContrastColor(primaryColor) }} />
             </Box>
           </Box>
-          <Typography
-            variant="h2"
-            fontWeight={800}
-            mb={2}
-            sx={{ fontSize: { xs: '2rem', md: '3rem' } }}
-          >
+          <Typography variant="h2" fontWeight={800} mb={2} sx={{ fontSize: { xs: '2rem', md: '3rem' } }}>
             Deine Lernplattform
           </Typography>
-          <Typography
-            variant="h6"
-            color="text.secondary"
-            mb={4}
-            sx={{ maxWidth: 600, mx: 'auto', fontWeight: 400 }}
-          >
-            Erstelle, verwalte und teile professionelle Online-Kurse mit Video-Aufnahmen und
-            interaktiven Inhalten
+          <Typography variant="h6" color="text.secondary" mb={4} sx={{ maxWidth: 600, mx: 'auto', fontWeight: 400 }}>
+            Erstelle, verwalte und teile professionelle Online-Kurse mit Video-Aufnahmen und interaktiven Inhalten
           </Typography>
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} justifyContent="center">
-            <Button
-              variant="contained"
-              size="large"
-              startIcon={<PlayArrowIcon />}
-              onClick={() => navigate('/signin')}
-              sx={{ px: 4, py: 1.5 }}
-            >
+            <Button variant="contained" size="large" startIcon={<PlayArrowIcon />} onClick={() => navigate('/signin')} sx={{ px: 4, py: 1.5, borderRadius: 2 }}>
               Jetzt loslegen
             </Button>
-            <Button
-              variant="outlined"
-              size="large"
-              onClick={() => navigate('/courses')}
-              sx={{ px: 4, py: 1.5 }}
-            >
+            <Button variant="outlined" size="large" onClick={() => navigate('/courses')} sx={{ px: 4, py: 1.5, borderRadius: 2 }}>
               Kurse ansehen
             </Button>
           </Stack>
         </Paper>
 
-        {/* Features in Cards mit Icons */}
-        <Grid container spacing={3} sx={{ mb: 6 }}>
+        <Grid container spacing={3}>
           {[
-            {
-              icon: <VideocamIcon />,
-              title: 'Video-Aufnahmen',
-              description: 'Nimm direkt im Browser professionelle Lektionen auf',
-              gradient: 'linear-gradient(135deg, #FB6542, #E05030)',
-            },
-            {
-              icon: <AutoStoriesIcon />,
-              title: 'Rich Content',
-              description: 'Erstelle interaktive Inhalte mit dem integrierten Editor',
-              gradient: 'linear-gradient(135deg, #3F681C, #2E4D14)',
-            },
-            {
-              icon: <TimelineIcon />,
-              title: 'Fortschritts-Tracking',
-              description: 'Verfolge den Lernfortschrift deiner Teilnehmer',
-              gradient: 'linear-gradient(135deg, #375E97, #2A4772)',
-            },
-            {
-              icon: <GroupsIcon />,
-              title: 'Team-Verwaltung',
-              description: 'Verwalte Mitglieder und Berechtigungen zentral',
-              gradient: 'linear-gradient(135deg, #FFBB00, #D99C00)',
-            },
+            { icon: <VideocamIcon />, title: 'Video-Aufnahmen', description: 'Nimm direkt im Browser professionelle Lektionen auf', color: '#ef4444' },
+            { icon: <AutoStoriesIcon />, title: 'Rich Content', description: 'Erstelle interaktive Inhalte mit dem integrierten Editor', color: '#22c55e' },
+            { icon: <TimelineIcon />, title: 'Fortschritts-Tracking', description: 'Verfolge den Lernfortschritt deiner Teilnehmer', color: '#3b82f6' },
+            { icon: <GroupsIcon />, title: 'Team-Verwaltung', description: 'Verwalte Mitglieder und Berechtigungen zentral', color: '#f59e0b' },
           ].map((feature, index) => (
             <Grid size={{ xs: 12, sm: 6 }} key={index}>
-              <Card
-                elevation={0}
-                sx={{
-                  height: '100%',
-                  transition: 'all 0.2s',
-                  boxShadow: 'none !important',
-                  border: '1px solid',
-                  borderColor: 'divider',
-                  '&:hover': {
-                    bgcolor: alpha(theme.palette.primary.main, 0.02),
-                    boxShadow: 'none !important',
-                  },
-                }}
-              >
+              <Card elevation={0} sx={{ height: '100%', border: '1px solid', borderColor: 'divider', borderRadius: 3, transition: 'all 0.2s', '&:hover': { borderColor: alpha(primaryColor, 0.3), transform: 'translateY(-2px)' } }}>
                 <CardContent sx={{ p: 3 }}>
                   <Stack direction="row" spacing={2} alignItems="flex-start">
-                    <Box
-                      sx={{
-                        width: 56,
-                        height: 56,
-                        borderRadius: 2,
-                        background: feature.gradient,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        color: 'white',
-                        flexShrink: 0,
-                      }}
-                    >
+                    <Box sx={{ width: 48, height: 48, borderRadius: 2, bgcolor: alpha(feature.color, 0.1), display: 'flex', alignItems: 'center', justifyContent: 'center', color: feature.color }}>
                       {feature.icon}
                     </Box>
                     <Box>
-                      <Typography variant="h6" fontWeight={700} mb={1}>
-                        {feature.title}
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        {feature.description}
-                      </Typography>
+                      <Typography variant="h6" fontWeight={700} mb={0.5}>{feature.title}</Typography>
+                      <Typography variant="body2" color="text.secondary">{feature.description}</Typography>
                     </Box>
                   </Stack>
                 </CardContent>
@@ -475,305 +615,556 @@ export default function Home() {
             </Grid>
           ))}
         </Grid>
+      </Box>
+    );
+  }
 
-        {/* Platform Stats */}
-        {(stats.courses > 0 || stats.members > 0) && (
-          <Card sx={{ textAlign: 'center' }}>
-            <CardContent sx={{ py: 5 }}>
-              <Typography variant="h5" fontWeight={700} mb={4}>
-                Die Plattform in Zahlen
+  // ============================================
+  // DASHBOARD (Logged in)
+  // ============================================
+  const lighterPrimary = getLighterColor(primaryColor);
+  const textOnPrimary = getContrastColor(primaryColor);
+
+  return (
+    <Box sx={{ p: { xs: 2, md: 4 }, maxWidth: 1160, mx: 'auto', width: '100%' }}>
+      
+      {/* HERO SECTION */}
+      <Paper
+        elevation={0}
+        sx={{
+          background: `linear-gradient(135deg, ${primaryColor}, ${lighterPrimary})`,
+          borderRadius: 4,
+          p: { xs: 3, md: 4 },
+          mb: 3,
+          position: 'relative',
+          overflow: 'hidden',
+        }}
+      >
+        <Box sx={{ position: 'absolute', right: -20, top: -20, opacity: 0.1 }}>
+          <RocketLaunchIcon sx={{ fontSize: 200, color: textOnPrimary }} />
+        </Box>
+
+        <Grid container spacing={3} alignItems="center">
+          <Grid size={{ xs: 12, md: 7 }}>
+            <Typography variant="overline" sx={{ color: alpha(textOnPrimary, 0.7), fontWeight: 600, letterSpacing: 1.5 }}>
+              {getGreeting()}
+            </Typography>
+            <Typography variant="h4" fontWeight={800} sx={{ color: textOnPrimary, mb: 1 }}>
+              {user.displayName || 'Willkommen zurück'}!
+            </Typography>
+            
+            {loading ? (
+              <Skeleton variant="text" width={200} sx={{ bgcolor: alpha(textOnPrimary, 0.1) }} />
+            ) : currentCourse ? (
+              <Box sx={{ mt: 2 }}>
+                <Stack direction="row" spacing={1} alignItems="center" mb={1}>
+                  <Typography variant="body2" sx={{ color: alpha(textOnPrimary, 0.8) }}>
+                    Aktueller Kurs:
+                  </Typography>
+                  <Typography variant="body2" fontWeight={700} sx={{ color: textOnPrimary }}>
+                    {currentCourse.title}
+                  </Typography>
+                </Stack>
+                <Stack direction="row" spacing={2} alignItems="center">
+                  <LinearProgress
+                    variant="determinate"
+                    value={currentCourse.progress}
+                    sx={{
+                      flex: 1,
+                      height: 8,
+                      borderRadius: 4,
+                      bgcolor: alpha(textOnPrimary, 0.2),
+                      '& .MuiLinearProgress-bar': {
+                        bgcolor: textOnPrimary,
+                        borderRadius: 4,
+                      },
+                    }}
+                  />
+                  <Typography variant="body2" fontWeight={700} sx={{ color: textOnPrimary, minWidth: 45 }}>
+                    {currentCourse.progress}%
+                  </Typography>
+                </Stack>
+              </Box>
+            ) : (
+              <Typography variant="body2" sx={{ color: alpha(textOnPrimary, 0.8), mt: 1 }}>
+                Erstelle deinen ersten Kurs und starte durch!
               </Typography>
-              <Grid container spacing={4}>
+            )}
+
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ mt: 3 }}>
+              {currentCourse && currentCourse.progress < 100 ? (
+                <Button
+                  variant="contained"
+                  size="large"
+                  startIcon={<PlayArrowIcon />}
+                  onClick={() => navigate(`/learn/${currentCourse.id}`)}
+                  sx={{
+                    bgcolor: textOnPrimary,
+                    color: primaryColor,
+                    px: 3,
+                    py: 1.2,
+                    borderRadius: 2,
+                    fontWeight: 700,
+                    '&:hover': { bgcolor: alpha(textOnPrimary, 0.9) },
+                  }}
+                >
+                  Weiterarbeiten
+                </Button>
+              ) : (
+                <Button
+                  variant="contained"
+                  size="large"
+                  startIcon={<AddIcon />}
+                  onClick={() => navigate('/courses')}
+                  sx={{
+                    bgcolor: textOnPrimary,
+                    color: primaryColor,
+                    px: 3,
+                    py: 1.2,
+                    borderRadius: 2,
+                    fontWeight: 700,
+                    '&:hover': { bgcolor: alpha(textOnPrimary, 0.9) },
+                  }}
+                >
+                  Neuen Kurs erstellen
+                </Button>
+              )}
+              <Button
+                variant="outlined"
+                size="large"
+                startIcon={<EditNoteIcon />}
+                onClick={() => navigate('/courses')}
+                sx={{
+                  borderColor: alpha(textOnPrimary, 0.5),
+                  color: textOnPrimary,
+                  px: 3,
+                  py: 1.2,
+                  borderRadius: 2,
+                  '&:hover': {
+                    borderColor: textOnPrimary,
+                    bgcolor: alpha(textOnPrimary, 0.1),
+                  },
+                }}
+              >
+                Kurse verwalten
+              </Button>
+            </Stack>
+          </Grid>
+
+          <Grid size={{ xs: 12, md: 5 }} sx={{ display: { xs: 'none', md: 'block' } }}>
+            <Stack direction="row" spacing={2} justifyContent="flex-end">
+              <Paper
+                elevation={0}
+                sx={{
+                  p: 2,
+                  borderRadius: 3,
+                  bgcolor: alpha(textOnPrimary, 0.15),
+                  backdropFilter: 'blur(10px)',
+                  minWidth: 100,
+                  textAlign: 'center',
+                }}
+              >
+                <Typography variant="h4" fontWeight={800} sx={{ color: textOnPrimary }}>
+                  {loading ? '-' : stats.totalCourses}
+                </Typography>
+                <Typography variant="caption" sx={{ color: alpha(textOnPrimary, 0.8) }}>
+                  Kurse
+                </Typography>
+              </Paper>
+              <Paper
+                elevation={0}
+                sx={{
+                  p: 2,
+                  borderRadius: 3,
+                  bgcolor: alpha(textOnPrimary, 0.15),
+                  backdropFilter: 'blur(10px)',
+                  minWidth: 100,
+                  textAlign: 'center',
+                }}
+              >
+                <Typography variant="h4" fontWeight={800} sx={{ color: textOnPrimary }}>
+                  {loading ? '-' : `${stats.avgProgress}%`}
+                </Typography>
+                <Typography variant="caption" sx={{ color: alpha(textOnPrimary, 0.8) }}>
+                  Fortschritt
+                </Typography>
+              </Paper>
+            </Stack>
+          </Grid>
+        </Grid>
+      </Paper>
+
+      {/* ATTENTION + INSIGHTS ROW */}
+      <Grid container spacing={3} sx={{ mb: 3 }}>
+        
+        {/* Attention Section */}
+        <Grid size={{ xs: 12, md: 5 }}>
+          <Card elevation={0} sx={{ height: '100%', border: '1px solid', borderColor: 'divider', borderRadius: 3 }}>
+            <CardContent sx={{ p: 3 }}>
+              <Stack direction="row" alignItems="center" spacing={1} mb={2}>
+                <WarningAmberIcon sx={{ color: '#f59e0b', fontSize: 20 }} />
+                <Typography variant="subtitle1" fontWeight={700}>
+                  Braucht Aufmerksamkeit
+                </Typography>
+              </Stack>
+
+              {loading ? (
+                <Stack spacing={2}>
+                  {[1, 2].map(i => <Skeleton key={i} variant="rounded" height={60} sx={{ borderRadius: 2 }} />)}
+                </Stack>
+              ) : attentionItems.length > 0 ? (
+                <Stack spacing={1.5}>
+                  {attentionItems.map((item) => (
+                    <Paper
+                      key={item.id}
+                      elevation={0}
+                      onClick={() => navigate(`/courses/${item.courseId}`)}
+                      sx={{
+                        p: 2,
+                        borderRadius: 2,
+                        bgcolor: item.severity === 'warning' ? alpha('#f59e0b', 0.08) : alpha(primaryColor, 0.05),
+                        border: '1px solid',
+                        borderColor: item.severity === 'warning' ? alpha('#f59e0b', 0.2) : alpha(primaryColor, 0.1),
+                        cursor: 'pointer',
+                        transition: 'all 0.2s',
+                        '&:hover': {
+                          bgcolor: item.severity === 'warning' ? alpha('#f59e0b', 0.12) : alpha(primaryColor, 0.08),
+                          transform: 'translateX(4px)',
+                        },
+                      }}
+                    >
+                      <Stack direction="row" justifyContent="space-between" alignItems="center">
+                        <Box sx={{ minWidth: 0, flex: 1 }}>
+                          <Typography variant="body2" fontWeight={600} noWrap>
+                            {item.title}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            {item.description}
+                          </Typography>
+                        </Box>
+                        <Chip
+                          label={item.action}
+                          size="small"
+                          sx={{
+                            ml: 1,
+                            fontSize: '0.7rem',
+                            height: 24,
+                            bgcolor: item.severity === 'warning' ? alpha('#f59e0b', 0.15) : alpha(primaryColor, 0.1),
+                            color: item.severity === 'warning' ? '#d97706' : primaryColor,
+                          }}
+                        />
+                      </Stack>
+                    </Paper>
+                  ))}
+                </Stack>
+              ) : (
+                <Box sx={{ textAlign: 'center', py: 3 }}>
+                  <CheckCircleIcon sx={{ fontSize: 40, color: '#22c55e', mb: 1, opacity: 0.7 }} />
+                  <Typography variant="body2" color="text.secondary">
+                    Alles erledigt! Keine offenen Punkte.
+                  </Typography>
+                </Box>
+              )}
+            </CardContent>
+          </Card>
+        </Grid>
+
+        {/* Performance Insights */}
+        <Grid size={{ xs: 12, md: 7 }}>
+          <Card elevation={0} sx={{ height: '100%', border: '1px solid', borderColor: 'divider', borderRadius: 3 }}>
+            <CardContent sx={{ p: 3 }}>
+              <Stack direction="row" alignItems="center" spacing={1} mb={2}>
+                <TrendingUpIcon sx={{ color: primaryColor, fontSize: 20 }} />
+                <Typography variant="subtitle1" fontWeight={700}>
+                  Performance
+                </Typography>
+              </Stack>
+
+              <Grid container spacing={2}>
                 {[
-                  { label: 'Kurse', value: stats.courses, icon: SchoolIcon },
-                  { label: 'Lektionen', value: stats.lessons, icon: AutoStoriesIcon },
-                  { label: 'Mitglieder', value: stats.members, icon: GroupsIcon },
+                  {
+                    label: 'Abschlussrate',
+                    value: loading ? '-' : `${completionRate}%`,
+                    icon: <EmojiEventsIcon />,
+                    color: completionRate >= 70 ? '#22c55e' : completionRate >= 40 ? '#f59e0b' : '#ef4444',
+                    bg: completionRate >= 70 ? alpha('#22c55e', 0.1) : completionRate >= 40 ? alpha('#f59e0b', 0.1) : alpha('#ef4444', 0.1),
+                  },
+                  {
+                    label: 'Ø Fortschritt',
+                    value: loading ? '-' : `${stats.avgProgress}%`,
+                    icon: <TimelineIcon />,
+                    color: primaryColor,
+                    bg: alpha(primaryColor, 0.1),
+                  },
+                  {
+                    label: 'Lektionen',
+                    value: loading ? '-' : stats.completedLessons,
+                    icon: <AutoStoriesIcon />,
+                    color: stats.completedLessons > 0 ? '#8b5cf6' : 'text.secondary',
+                    bg: stats.completedLessons > 0 ? alpha('#8b5cf6', 0.1) : alpha('#888', 0.1),
+                  },
+                  {
+                    label: 'Abgeschlossen',
+                    value: loading ? '-' : `${stats.completedCourses}/${stats.totalCourses}`,
+                    icon: <CheckCircleIcon />,
+                    color: '#22c55e',
+                    bg: alpha('#22c55e', 0.1),
+                  },
                 ].map((stat, index) => (
-                  <Grid size={{ xs: 12, sm: 4 }} key={index}>
-                    <Stack alignItems="center" spacing={1}>
-                      <stat.icon sx={{ fontSize: 40, color: 'primary.main' }} />
-                      <Typography variant="h3" fontWeight={800}>
-                        {stat.value}
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        {stat.label}
-                      </Typography>
-                    </Stack>
+                  <Grid size={{ xs: 6 }} key={index}>
+                    <Paper elevation={0} sx={{ p: 2, borderRadius: 2, bgcolor: stat.bg, height: '100%' }}>
+                      <Stack direction="row" spacing={1.5} alignItems="center">
+                        <Box sx={{ color: stat.color }}>{stat.icon}</Box>
+                        <Box>
+                          <Typography variant="h6" fontWeight={800} sx={{ color: stat.color, lineHeight: 1.2 }}>
+                            {stat.value}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            {stat.label}
+                          </Typography>
+                        </Box>
+                      </Stack>
+                    </Paper>
                   </Grid>
                 ))}
               </Grid>
             </CardContent>
           </Card>
-        )}
-      </Box>
-    );
-  }
-
-  // Dashboard für eingeloggte Benutzer
-  const lighterColor = getLighterColor(theme.palette.primary.main);
-
-  return (
-    <Box sx={{ p: { xs: 2, md: 4 }, maxWidth: 1160, mx: 'auto', width: '100%' }}>
-      {/* Welcome Header mit Gradient */}
-      <Paper
-        elevation={0}
-        sx={{
-          background: `linear-gradient(135deg, ${theme.palette.primary.main}, ${lighterColor})`,
-          color: (() => {
-            const lum = getLuminance(theme.palette.primary.main);
-            // Bei sehr hellen Farben (wie weiß) → dunklen Text
-            // Bei sehr dunklen Farben im Dark Mode → hellen Text bleibt
-            if (lum > 0.7) {
-              return theme.palette.mode === 'dark' ? '#000' : '#000';
-            }
-            return 'white';
-          })(),
-          p: 4,
-          borderRadius: 3,
-          mb: 4,
-        }}
-      >
-        <Stack direction="row" justifyContent="space-between" alignItems="center">
-          <Box>
-            <Typography variant="h4" fontWeight={700} mb={0.5}>
-              Hallo, {user.displayName || 'Lernender'}!
-            </Typography>
-            <Typography variant="body1" sx={{ opacity: 0.95 }}>
-              Deine Lernübersicht für heute
-            </Typography>
-          </Box>
-          <LocalFireDepartmentIcon 
-            sx={{ 
-              fontSize: 60, 
-              opacity: (() => {
-                const lum = getLuminance(theme.palette.primary.main);
-                return lum > 0.7 ? 0.15 : 0.3;
-              })()
-            }} 
-          />
-        </Stack>
-      </Paper>
-
-      {/* Quick Stats Grid */}
-      <Grid container spacing={2} sx={{ mb: 4 }}>
-        <Grid size={{ xs: 12, sm: 6 }}>
-          <Card sx={{ height: '100%' }}>
-            <CardContent sx={{ p: 2.5, '&:last-child': { pb: 2.5 } }}>
-              <Stack spacing={1}>
-                <Stack direction="row" justifyContent="space-between" alignItems="center">
-                  <Typography variant="body2" color="text.secondary" fontWeight={600}>
-                    MEINE KURSE
-                  </Typography>
-                  <SchoolIcon sx={{ fontSize: 20, color: 'primary.main' }} />
-                </Stack>
-                <Typography variant="h3" fontWeight={800}>
-                  {recentCourses.length}
-                </Typography>
-                <Typography variant="caption" color="text.secondary">
-                  Aktive Kurse
-                </Typography>
-              </Stack>
-            </CardContent>
-          </Card>
-        </Grid>
-        <Grid size={{ xs: 12, sm: 6 }}>
-          <Card sx={{ height: '100%', background: `linear-gradient(135deg, ${alpha('#22c55e', 0.15)}, ${alpha('#22c55e', 0.08)})` }}>
-            <CardContent sx={{ p: 2.5, '&:last-child': { pb: 2.5 } }}>
-              <Stack spacing={1}>
-                <Stack direction="row" justifyContent="space-between" alignItems="center">
-                  <Typography variant="body2" color="text.secondary" fontWeight={600}>
-                    ABGESCHLOSSEN
-                  </Typography>
-                  <CheckCircleIcon sx={{ fontSize: 20, color: '#22c55e' }} />
-                </Stack>
-                <Typography variant="h3" fontWeight={800}>
-                  {recentCourses.filter(c => c.progress === 100).length}
-                </Typography>
-                <Typography variant="caption" color="text.secondary">
-                  Kurse beendet
-                </Typography>
-              </Stack>
-            </CardContent>
-          </Card>
         </Grid>
       </Grid>
 
-      {/* Features Section */}
+      {/* ACTIVITY + COURSES ROW */}
+      <Grid container spacing={3} sx={{ mb: 3 }}>
+        
+        {/* Neuigkeiten */}
+        <Grid size={{ xs: 12, md: 5 }}>
+          <Card elevation={0} sx={{ height: '100%', border: '1px solid', borderColor: 'divider', borderRadius: 3 }}>
+            <CardContent sx={{ p: 3 }}>
+              <Stack direction="row" alignItems="center" spacing={1} mb={2}>
+                <NotificationsNoneIcon sx={{ color: 'text.secondary', fontSize: 20 }} />
+                <Typography variant="subtitle1" fontWeight={700}>
+                  Neuigkeiten
+                </Typography>
+              </Stack>
 
-      <Grid container spacing={2} sx={{ mb: 4 }}>
-        {[
-          {
-            icon: <VideocamIcon />,
-            title: 'Video-Aufnahmen',
-            description: 'Nimm Lektionen direkt im Browser auf',
-            gradient: 'linear-gradient(135deg, #FB6542, #E05030)',
-          },
-          {
-            icon: <AutoStoriesIcon />,
-            title: 'Rich Content',
-            description: 'Interaktive Inhalte mit Editor erstellen',
-            gradient: 'linear-gradient(135deg, #3F681C, #2E4D14)',
-          },
-          {
-            icon: <TimelineIcon />,
-            title: 'Fortschritts-Tracking',
-            description: 'Lernfortschritt deiner Teilnehmer verfolgen',
-            gradient: 'linear-gradient(135deg, #375E97, #2A4772)',
-          },
-          {
-            icon: <GroupsIcon />,
-            title: 'Team-Verwaltung',
-            description: 'Mitglieder und Berechtigungen verwalten',
-            gradient: 'linear-gradient(135deg, #FFBB00, #D99C00)',
-          },
-        ].map((feature, index) => (
-          <Grid size={{ xs: 6, sm: 6, md: 6 }} key={index}>
-            <Card
-              sx={{
-                height: '100%',
-                transition: 'all 0.2s',
-                '&:hover': {
-                  transform: 'translateY(-2px)',
-/*                   boxShadow: (() => {
-                    const lum = getLuminance(theme.palette.primary.main);
-                    const color = theme.palette.mode === 'dark'
-                      ? (lum < 0.3 ? lighten(theme.palette.primary.main, 0.5) : theme.palette.primary.main)
-                      : (lum > 0.7 ? darken(theme.palette.primary.main, 0.5) : theme.palette.primary.main);
-                    return `0 0 16px ${alpha(color, 0.35)}`;
-                  })(), */
-                },
-              }}
-            >
-              <CardContent sx={{ p: 2.5, '&:last-child': { pb: 2.5 } }}>
-                <Stack direction="row" spacing={2} alignItems="center">
-                  <Box
-                    sx={{
-                      width: 48,
-                      height: 48,
-                      borderRadius: 2,
-                      background: feature.gradient,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      color: 'white',
-                      flexShrink: 0,
-                    }}
-                  >
-                    {feature.icon}
-                  </Box>
-                  <Box sx={{ flex: 1 }}>
-                    <Typography variant="subtitle1" fontWeight={700} mb={0.5}>
-                      {feature.title}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      {feature.description}
-                    </Typography>
-                  </Box>
+              {loading ? (
+                <Stack spacing={2}>
+                  {[1, 2, 3].map(i => <Skeleton key={i} variant="rounded" height={50} sx={{ borderRadius: 2 }} />)}
                 </Stack>
-              </CardContent>
-            </Card>
-          </Grid>
-        ))}
-      </Grid>
-
-      <Card>
-        <CardContent sx={{ p: 3 }}>
-          <Stack direction="row" justifyContent="space-between" alignItems="center" mb={3}>
-            <Typography variant="h6" fontWeight={700}>
-              Deine Kurse
-            </Typography>
-            <Button
-              size="small"
-              endIcon={<ArrowForwardIcon />}
-              onClick={() => navigate('/courses')}
-            >
-              Alle anzeigen
-            </Button>
-          </Stack>
-
-          {loading ? (
-            <Box sx={{ textAlign: 'center', py: 4 }}>
-              <Typography color="text.secondary">Lade Kurse...</Typography>
-            </Box>
-          ) : recentCourses.length > 0 ? (
-            <Stack spacing={2}>
-              {recentCourses.slice(0, 3).map((course) => (
-                <Paper
-                  key={course.id}
-                  elevation={0}
-                  sx={{
-                    p: 2,
-                    cursor: 'pointer',
-                    transition: 'all 0.2s',
-                    boxShadow: 'none !important',
-                    '&:hover': {
-                      bgcolor: alpha(theme.palette.primary.main, 0.08), // vorher 0.02
-                      boxShadow: 'none !important',
-                    },
-                  }}
-                  onClick={() => navigate(`/learn/${course.id}`)}
-                >
-                  <Stack direction="row" spacing={2} alignItems="center">
+              ) : activities.filter(a => {
+                // Check settings filter
+                if (a.type === 'course_completed' && !newsSettings.course_completed) return false;
+                if (a.type === 'course_created' && !newsSettings.course_created) return false;
+                if (a.type === 'invitation_received' && !newsSettings.invitation_received) return false;
+                if (a.type === 'lesson_completed' && !newsSettings.lesson_completed) return false;
+                if (a.type === 'member_added' && !newsSettings.member_added) return false;
+                // Check dismissed (only if activity timestamp <= dismissed timestamp)
+                const dismissedAt = dismissedActivities[a.id];
+                if (dismissedAt && a.timestamp.getTime() <= dismissedAt) return false;
+                return true;
+              }).length > 0 ? (
+                <Stack spacing={0}>
+                  {activities.filter(a => {
+                    if (a.type === 'course_completed' && !newsSettings.course_completed) return false;
+                    if (a.type === 'course_created' && !newsSettings.course_created) return false;
+                    if (a.type === 'invitation_received' && !newsSettings.invitation_received) return false;
+                    if (a.type === 'lesson_completed' && !newsSettings.lesson_completed) return false;
+                    if (a.type === 'member_added' && !newsSettings.member_added) return false;
+                    const dismissedAt = dismissedActivities[a.id];
+                    if (dismissedAt && a.timestamp.getTime() <= dismissedAt) return false;
+                    return true;
+                  }).slice(0, 5).map((activity, index, arr) => (
                     <Box
+                      key={activity.id}
                       sx={{
-                        width: 64,
-                        height: 64,
-                        borderRadius: 2,
-                        background: course.thumbnailUrl
-                          ? `url(${course.thumbnailUrl})`
-                          : `linear-gradient(135deg, ${theme.palette.primary.main}, ${lighterColor})`,
-                        backgroundSize: 'cover',
-                        backgroundPosition: 'center',
-                        flexShrink: 0,
+                        display: 'flex',
+                        alignItems: 'flex-start',
+                        py: 1.5,
+                        borderBottom: index < arr.length - 1 ? '1px solid' : 'none',
+                        borderColor: 'divider',
+                        cursor: activity.type === 'invitation_received' ? 'pointer' : 'default',
+                        borderRadius: 1,
+                        mx: -1,
+                        px: 1,
+                        transition: 'all 0.15s',
+                        '&:hover': activity.type === 'invitation_received' ? {
+                          bgcolor: alpha(primaryColor, 0.05),
+                        } : {},
                       }}
-                    />
-                    <Box sx={{ flex: 1, minWidth: 0 }}>
-                      <Typography variant="subtitle1" fontWeight={700} noWrap>
-                        {course.title}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary" noWrap>
-                        {course.lessonsCount} Lektionen
-                      </Typography>
-                      {course.progress !== undefined && (
-                        <Box sx={{ mt: 1 }}>
-                          <Stack direction="row" spacing={1} alignItems="center" mb={0.5}>
-                            <LinearProgress
-                              variant="determinate"
-                              value={course.progress}
-                              sx={{ flex: 1, height: 6, borderRadius: 3 }}
-                            />
-                            <Typography variant="caption" fontWeight={600} sx={{ minWidth: 40 }}>
-                              {course.progress}%
-                            </Typography>
-                          </Stack>
-                        </Box>
-                      )}
+                      onClick={() => {
+                        if (activity.type === 'invitation_received') {
+                          navigate('/dashboard');
+                        }
+                      }}
+                    >
+                      <Avatar
+                        sx={{
+                          width: 32,
+                          height: 32,
+                          mr: 1.5,
+                          bgcolor: activity.icon === 'trophy' ? alpha('#f59e0b', 0.15) :
+                                   activity.icon === 'check' ? alpha('#22c55e', 0.15) :
+                                   activity.icon === 'mail' ? alpha('#3b82f6', 0.15) :
+                                   activity.icon === 'person' ? alpha('#8b5cf6', 0.15) :
+                                   alpha(primaryColor, 0.15),
+                        }}
+                      >
+                        {activity.icon === 'trophy' && <EmojiEventsIcon sx={{ fontSize: 16, color: '#f59e0b' }} />}
+                        {activity.icon === 'check' && <CheckCircleIcon sx={{ fontSize: 16, color: '#22c55e' }} />}
+                        {activity.icon === 'add' && <AddIcon sx={{ fontSize: 16, color: primaryColor }} />}
+                        {activity.icon === 'edit' && <EditNoteIcon sx={{ fontSize: 16, color: primaryColor }} />}
+                        {activity.icon === 'mail' && <MailOutlineIcon sx={{ fontSize: 16, color: '#3b82f6' }} />}
+                        {activity.icon === 'person' && <PersonAddIcon sx={{ fontSize: 16, color: '#8b5cf6' }} />}
+                      </Avatar>
+                      <Box sx={{ flex: 1, minWidth: 0 }}>
+                        <Typography variant="body2" fontWeight={600} noWrap>
+                          {activity.title}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {activity.subtitle ? `${activity.subtitle} · ` : ''}{getTimeAgo(activity.timestamp)}
+                        </Typography>
+                      </Box>
+                      <Tooltip title="Entfernen">
+                        <IconButton
+                          size="small"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const newDismissed = {
+                              ...dismissedActivities,
+                              [activity.id]: activity.timestamp.getTime(),
+                            };
+                            setDismissedActivities(newDismissed);
+                            localStorage.setItem('dismissedActivities', JSON.stringify(newDismissed));
+                          }}
+                          sx={{
+                            opacity: 0.5,
+                            '&:hover': { opacity: 1, color: 'error.main' },
+                          }}
+                        >
+                          <CloseIcon sx={{ fontSize: 16 }} />
+                        </IconButton>
+                      </Tooltip>
                     </Box>
-                    <IconButton size="small">
-                      <PlayArrowIcon />
-                    </IconButton>
-                  </Stack>
-                </Paper>
-              ))}
-            </Stack>
-          ) : (
-            <Box sx={{ textAlign: 'center', py: 4 }}>
-              <SchoolIcon sx={{ fontSize: 48, color: 'text.secondary', mb: 2, opacity: 0.5 }} />
-              <Typography variant="body2" color="text.secondary" mb={2}>
-                Du hast noch keine Kurse erstellt
-              </Typography>
-              <Button
-                variant="outlined"
-                size="small"
-                startIcon={<AddIcon />}
-                onClick={() => navigate('/courses')}
-              >
-                Ersten Kurs erstellen
-              </Button>
-            </Box>
-          )}
-        </CardContent>
-      </Card>
+                  ))}
+                </Stack>
+              ) : (
+                <Box sx={{ textAlign: 'center', py: 4 }}>
+                  <CheckCircleIcon sx={{ fontSize: 40, color: '#22c55e', mb: 1, opacity: 0.7 }} />
+                  <Typography variant="body2" color="text.secondary">
+                    Alles gelesen!
+                  </Typography>
+                </Box>
+              )}
+            </CardContent>
+          </Card>
+        </Grid>
+
+        {/* Courses Preview */}
+        <Grid size={{ xs: 12, md: 7 }}>
+          <Card elevation={0} sx={{ height: '100%', border: '1px solid', borderColor: 'divider', borderRadius: 3 }}>
+            <CardContent sx={{ p: 3 }}>
+              <Stack direction="row" justifyContent="space-between" alignItems="center" mb={2}>
+                <Stack direction="row" alignItems="center" spacing={1}>
+                  <SchoolIcon sx={{ color: primaryColor, fontSize: 20 }} />
+                  <Typography variant="subtitle1" fontWeight={700}>
+                    Deine Kurse
+                  </Typography>
+                </Stack>
+                <Button size="small" endIcon={<ArrowForwardIcon />} onClick={() => navigate('/courses')} sx={{ textTransform: 'none' }}>
+                  Alle anzeigen
+                </Button>
+              </Stack>
+
+              {loading ? (
+                <Stack spacing={2}>
+                  {[1, 2, 3].map(i => <Skeleton key={i} variant="rounded" height={70} sx={{ borderRadius: 2 }} />)}
+                </Stack>
+              ) : courses.length > 0 ? (
+                <Stack spacing={1.5}>
+                  {courses.slice(0, 4).map((course) => (
+                    <Paper
+                      key={course.id}
+                      elevation={0}
+                      onClick={() => navigate(`/learn/${course.id}`)}
+                      sx={{
+                        p: 2,
+                        borderRadius: 2,
+                        border: '1px solid',
+                        borderColor: 'divider',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s',
+                        '&:hover': {
+                          borderColor: alpha(primaryColor, 0.3),
+                          bgcolor: alpha(primaryColor, 0.03),
+                          transform: 'translateX(4px)',
+                        },
+                      }}
+                    >
+                      <Stack direction="row" spacing={2} alignItems="center">
+                        <Box
+                          sx={{
+                            width: 48,
+                            height: 48,
+                            borderRadius: 2,
+                            background: course.thumbnailUrl
+                              ? `url(${course.thumbnailUrl})`
+                              : course.coverColor 
+                                ? course.coverColor
+                                : `linear-gradient(135deg, ${primaryColor}, ${lighterPrimary})`,
+                            backgroundSize: 'cover',
+                            backgroundPosition: 'center',
+                            flexShrink: 0,
+                          }}
+                        />
+                        <Box sx={{ flex: 1, minWidth: 0 }}>
+                          <Typography variant="body2" fontWeight={700} noWrap>
+                            {course.title}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            {course.lessonsCount} Lektionen · {course.chaptersCount} Kapitel
+                          </Typography>
+                          <LinearProgress
+                            variant="determinate"
+                            value={course.progress}
+                            sx={{
+                              mt: 1,
+                              height: 4,
+                              borderRadius: 2,
+                              bgcolor: alpha(primaryColor, 0.1),
+                              '& .MuiLinearProgress-bar': {
+                                borderRadius: 2,
+                                bgcolor: course.progress === 100 ? '#22c55e' : primaryColor,
+                              },
+                            }}
+                          />
+                        </Box>
+                        <Stack alignItems="flex-end" spacing={0.5}>
+                          <Typography variant="body2" fontWeight={700} sx={{ color: course.progress === 100 ? '#22c55e' : primaryColor }}>
+                            {course.progress}%
+                          </Typography>
+                          {course.progress === 100 && (
+                            <CheckCircleIcon sx={{ fontSize: 16, color: '#22c55e' }} />
+                          )}
+                        </Stack>
+                      </Stack>
+                    </Paper>
+                  ))}
+                </Stack>
+              ) : (
+                <Box sx={{ textAlign: 'center', py: 4 }}>
+                  <FolderOffIcon sx={{ fontSize: 48, color: 'text.secondary', mb: 2, opacity: 0.5 }} />
+                  <Typography variant="body2" color="text.secondary" mb={2}>
+                    Noch keine Kurse vorhanden
+                  </Typography>
+                  <Button variant="outlined" size="small" startIcon={<AddIcon />} onClick={() => navigate('/courses')}>
+                    Ersten Kurs erstellen
+                  </Button>
+                </Box>
+              )}
+            </CardContent>
+          </Card>
+        </Grid>
+      </Grid>
     </Box>
   );
 }
