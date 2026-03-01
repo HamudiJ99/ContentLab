@@ -148,7 +148,7 @@ export default function Dashboard() {
   // Search functionality
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
+  const [setIsSearching] = useState(false);
 
   // Color utilities
   const getContrastColor = (bgColor: string): string => {
