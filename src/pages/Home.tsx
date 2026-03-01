@@ -122,7 +122,7 @@ const getTimeAgo = (date: Date): string => {
 const getGreeting = (): string => {
   const hour = new Date().getHours();
   if (hour < 12) return 'Guten Morgen';
-  if (hour < 18) return 'Guten Tag';
+  if (hour < 18) return 'Willkommen zurück';
   return 'Guten Abend';
 };
 

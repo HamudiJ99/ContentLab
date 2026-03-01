@@ -201,6 +201,8 @@ const Courses = () => {
   const [editingCourseId, setEditingCourseId] = useState<string | null>(null);
   const [draggingCourseId, setDraggingCourseId] = useState<string | null>(null);
   const [draggingCategoryId, setDraggingCategoryId] = useState<string | null>(null);
+  const [showQuickAddCategory, setShowQuickAddCategory] = useState(false);
+  const [quickCategoryName, setQuickCategoryName] = useState('');
   const [currentUser, setCurrentUser] = useState<User | null>(auth.currentUser);
   const coursesRef = useRef<Course[]>([]);
   const categoriesRef = useRef<Category[]>([]);
@@ -532,6 +534,45 @@ const Courses = () => {
     }
   };
 
+  const handleQuickAddCategory = async () => {
+    if (!quickCategoryName.trim() || !currentUser) {
+      return;
+    }
+    try {
+      const categoryRef = doc(collection(db, 'users', currentUser.uid, 'categories'));
+      const newCategory: Category = { 
+        id: categoryRef.id, 
+        name: quickCategoryName.trim(), 
+        icon: iconOptions[0].value,
+        showInFilters: true 
+      };
+      let updatedCategories: Category[] = categoriesRef.current;
+      updateCategories((prev) => {
+        updatedCategories = [...prev, newCategory];
+        return updatedCategories;
+      });
+      await setDoc(categoryRef, {
+        name: newCategory.name,
+        icon: newCategory.icon,
+        showInFilters: true,
+        position: updatedCategories.length - 1,
+      });
+      await persistCategoryOrder(updatedCategories);
+      
+      // Füge die neue Kategorie automatisch zum Kurs hinzu
+      setCourseForm((prev) => ({
+        ...prev,
+        categoryIds: [...prev.categoryIds, newCategory.id],
+      }));
+      
+      // Reset
+      setQuickCategoryName('');
+      setShowQuickAddCategory(false);
+    } catch (error) {
+      console.error('Kategorie konnte nicht erstellt werden', error);
+    }
+  };
+
   const handleDeleteCategory = async (categoryId: string) => {
     if (!currentUser) {
       return;
@@ -609,6 +650,12 @@ const Courses = () => {
     setCourseDialogOpen(true);
   };
 
+  const handleCloseCourseDialog = () => {
+    setCourseDialogOpen(false);
+    setShowQuickAddCategory(false);
+    setQuickCategoryName('');
+  };
+
   const handleSaveCourse = async () => {
     if (!courseForm.title.trim() || !currentUser) {
       return;
@@ -670,7 +717,7 @@ const Courses = () => {
         });
         await persistCourseOrder(updatedCourses);
       }
-      setCourseDialogOpen(false);
+      handleCloseCourseDialog();
     } catch (error) {
       console.error('Kurs konnte nicht gespeichert werden', error);
     }
@@ -1220,7 +1267,7 @@ const Courses = () => {
       </Dialog>
 
       {/* Kurs Dialog */}
-      <Dialog open={courseDialogOpen} onClose={() => setCourseDialogOpen(false)} maxWidth="sm" fullWidth>
+      <Dialog open={courseDialogOpen} onClose={handleCloseCourseDialog} maxWidth="sm" fullWidth>
         <DialogTitle>{editingCourseId ? 'Kurs bearbeiten' : 'Kurs erstellen'}</DialogTitle>
         <DialogContent>
           <Stack spacing={2} mt={1}>
@@ -1263,6 +1310,58 @@ const Courses = () => {
                 ))}
               </Select>
             </FormControl>
+            
+            {/* Schnelles Hinzufügen einer Kategorie */}
+            {!showQuickAddCategory ? (
+              <Button
+                size="small"
+                startIcon={<AddIcon />}
+                onClick={() => setShowQuickAddCategory(true)}
+                sx={{ alignSelf: 'flex-start', textTransform: 'none' }}
+              >
+                Neue Kategorie erstellen
+              </Button>
+            ) : (
+              <Box sx={{ p: 2, border: '1px solid', borderColor: 'divider', borderRadius: 2, bgcolor: 'background.default' }}>
+                <Stack spacing={1.5}>
+                  <Typography variant="body2" fontWeight={600}>
+                    Neue Kategorie erstellen
+                  </Typography>
+                  <TextField
+                    size="small"
+                    label="Kategoriename"
+                    value={quickCategoryName}
+                    onChange={(e) => setQuickCategoryName(e.target.value)}
+                    onKeyPress={(e) => {
+                      if (e.key === 'Enter' && quickCategoryName.trim()) {
+                        handleQuickAddCategory();
+                      }
+                    }}
+                    fullWidth
+                    autoFocus
+                  />
+                  <Stack direction="row" spacing={1} justifyContent="flex-end">
+                    <Button
+                      size="small"
+                      onClick={() => {
+                        setShowQuickAddCategory(false);
+                        setQuickCategoryName('');
+                      }}
+                    >
+                      Abbrechen
+                    </Button>
+                    <Button
+                      size="small"
+                      variant="contained"
+                      onClick={handleQuickAddCategory}
+                      disabled={!quickCategoryName.trim()}
+                    >
+                      Hinzufügen
+                    </Button>
+                  </Stack>
+                </Stack>
+              </Box>
+            )}
           </Stack>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 3 }}>
@@ -1271,7 +1370,7 @@ const Courses = () => {
             spacing={1.5}
             sx={{ width: '100%', maxWidth: 520, justifyContent: 'flex-end', mx: 'auto' }}
           >
-            <Button onClick={() => setCourseDialogOpen(false)}>Abbrechen</Button>
+            <Button onClick={handleCloseCourseDialog}>Abbrechen</Button>
             <Button variant="contained" onClick={handleSaveCourse}>
               Speichern
             </Button>
