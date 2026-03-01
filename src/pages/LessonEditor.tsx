@@ -391,6 +391,7 @@ const LessonEditor = () => {
       const downloadUrl = await getDownloadURL(storageRef);
       setPdfUrl(downloadUrl);
       setPdfFile(null);
+      setHasUnsavedChanges(true);
       setPageError(null);
     } catch (error) {
       console.error('PDF upload failed:', error);
@@ -583,12 +584,13 @@ const LessonEditor = () => {
       setVideoUrl(downloadUrl);
       setVideoFile(null);
       
-      // Speichere die Videodauer in Firestore
-      if (lessonRef && videoDuration > 0) {
-        await updateDoc(lessonRef, { 
-          videoUrl: downloadUrl,
-          videoDuration: videoDuration
-        });
+      // Speichere Video-URL und Dauer in Firestore
+      if (lessonRef) {
+        const updateData: Record<string, unknown> = { videoUrl: downloadUrl };
+        if (videoDuration > 0) {
+          updateData.videoDuration = videoDuration;
+        }
+        await updateDoc(lessonRef, updateData);
       }
       
       // Aktualisiere Kursdauer
