@@ -148,7 +148,6 @@ export default function Dashboard() {
   // Search functionality
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
-  const [setIsSearching] = useState(false);
 
   // Color utilities
   const getContrastColor = (bgColor: string): string => {
@@ -424,11 +423,8 @@ export default function Dashboard() {
   useEffect(() => {
     if (!searchQuery.trim()) {
       setSearchResults([]);
-      setIsSearching(false);
       return;
     }
-
-    setIsSearching(true);
     const query = searchQuery.toLowerCase().trim();
     const results: SearchResult[] = [];
 
@@ -483,7 +479,6 @@ export default function Dashboard() {
     );
 
     setSearchResults(uniqueResults.slice(0, 15));
-    setIsSearching(false);
   }, [searchQuery, courses]);
 
   // Calculate stats
