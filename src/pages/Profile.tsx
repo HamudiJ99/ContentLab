@@ -24,6 +24,7 @@ import SaveIcon from '@mui/icons-material/Save';
 import LockResetIcon from '@mui/icons-material/LockReset';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import GavelIcon from '@mui/icons-material/Gavel';
+import PersonIcon from '@mui/icons-material/Person';
 import Cropper, { type Area } from 'react-easy-crop';
 import 'react-easy-crop/react-easy-crop.css';
 import { FirebaseError } from 'firebase/app';
@@ -98,6 +99,11 @@ export default function Profile() {
   const [deletePassword, setDeletePassword] = useState('');
   const [deleteError, setDeleteError] = useState('');
   const [deleteLoading, setDeleteLoading] = useState(false);
+
+  // Prüfe ob der User mit Email/Password angemeldet ist (nicht Google)
+  const isEmailPasswordUser = currentUser?.providerData.some(
+    (provider) => provider.providerId === 'password'
+  ) ?? false;
   const fileInputRef = useRef<HTMLInputElement>(null);
   const logoFileInputRef = useRef<HTMLInputElement>(null);
   const previewUrlRef = useRef<string | null>(null);
@@ -407,24 +413,42 @@ export default function Profile() {
     if (!currentUser || !currentUser.email) {
       return;
     }
-    if (!deletePassword) {
-      setDeleteError('Bitte Passwort eingeben.');
-      return;
-    }
-    setDeleteLoading(true);
-    setDeleteError('');
-    try {
-      const credential = EmailAuthProvider.credential(currentUser.email, deletePassword);
-      await reauthenticateWithCredential(currentUser, credential);
-      await deleteDoc(doc(db, 'users', currentUser.uid));
-      await deleteUser(currentUser);
-      setDeleteDialogOpen(false);
-      navigate('/auth');
-    } catch (error) {
-      setDeleteError(getErrorMessage(error));
-    } finally {
-      setDeleteLoading(false);
-      setDeletePassword('');
+
+    // Für Email/Password-Nutzer: Passwort-Verifizierung erforderlich
+    if (isEmailPasswordUser) {
+      if (!deletePassword) {
+        setDeleteError('Bitte Passwort eingeben.');
+        return;
+      }
+      setDeleteLoading(true);
+      setDeleteError('');
+      try {
+        const credential = EmailAuthProvider.credential(currentUser.email, deletePassword);
+        await reauthenticateWithCredential(currentUser, credential);
+        await deleteDoc(doc(db, 'users', currentUser.uid));
+        await deleteUser(currentUser);
+        setDeleteDialogOpen(false);
+        navigate('/auth');
+      } catch (error) {
+        setDeleteError(getErrorMessage(error));
+      } finally {
+        setDeleteLoading(false);
+        setDeletePassword('');
+      }
+    } else {
+      // Für Google-Nutzer: Direkte Löschung (Re-Authentifizierung erfolgte bereits beim Login)
+      setDeleteLoading(true);
+      setDeleteError('');
+      try {
+        await deleteDoc(doc(db, 'users', currentUser.uid));
+        await deleteUser(currentUser);
+        setDeleteDialogOpen(false);
+        navigate('/auth');
+      } catch (error) {
+        setDeleteError(getErrorMessage(error));
+      } finally {
+        setDeleteLoading(false);
+      }
     }
   };
 
@@ -537,9 +561,14 @@ export default function Profile() {
               <Divider />
 
               <Box>
-                <Typography variant="h6" fontWeight={600} mb={2}>
-                  Anzeigename
-                </Typography>
+                <Stack direction="row" spacing={2} alignItems="center" mb={2}>
+                  <PersonIcon color="primary" />
+                  <Box>
+                    <Typography variant="h6" fontWeight={600}>
+                      Anzeigename
+                    </Typography>
+                  </Box>
+                </Stack>
                 <TextField
                   label="Name"
                   value={profileForm.displayName}
@@ -558,65 +587,69 @@ export default function Profile() {
                 </Box>
               </Box>
 
-              <Divider />
+              {isEmailPasswordUser && (
+                <>
+                  <Divider />
 
-              <Box>
-                <Stack direction="row" spacing={2} alignItems="center" mb={2}>
-                  <LockResetIcon color="primary" />
                   <Box>
-                    <Typography variant="h6" fontWeight={600}>
-                      Passwort ändern
-                    </Typography>
-                    <Typography color="text.secondary">
-                      Aus Sicherheitsgründen ist die Eingabe des aktuellen Passworts notwendig.
-                    </Typography>
-                  </Box>
-                </Stack>
-                {passwordFeedback.error && (
-                  <Alert severity="error" sx={{ mb: 2 }}>
-                    {passwordFeedback.error}
-                  </Alert>
-                )}
-                {passwordFeedback.success && (
-                  <Alert severity="success" sx={{ mb: 2 }}>
-                    {passwordFeedback.success}
-                  </Alert>
-                )}
-                <Box
-                  sx={{
-                    display: 'grid',
-                    gap: 2,
-                    gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))' },
-                    alignItems: 'center',
-                  }}
-                >
-                  <TextField
-                    label="Aktuelles Passwort"
-                    type="password"
-                    value={passwordForm.current}
-                    onChange={(event) => setPasswordForm((prev) => ({ ...prev, current: event.target.value }))}
-                    fullWidth
-                  />
-                  <TextField
-                    label="Neues Passwort"
-                    type="password"
-                    value={passwordForm.next}
-                    onChange={(event) => setPasswordForm((prev) => ({ ...prev, next: event.target.value }))}
-                    fullWidth
-                  />
-                  <Box />
-                  <Box sx={{ display: 'flex', justifyContent: { xs: 'flex-start', sm: 'flex-end' } }}>
-                    <Button
-                      variant="contained"
-                      color="primary"
-                      onClick={handlePasswordChange}
-                      disabled={passwordLoading}
+                    <Stack direction="row" spacing={2} alignItems="center" mb={2}>
+                      <LockResetIcon color="primary" />
+                      <Box>
+                        <Typography variant="h6" fontWeight={600}>
+                          Passwort ändern
+                        </Typography>
+                        <Typography color="text.secondary">
+                          Aus Sicherheitsgründen ist die Eingabe des aktuellen Passworts notwendig.
+                        </Typography>
+                      </Box>
+                    </Stack>
+                    {passwordFeedback.error && (
+                      <Alert severity="error" sx={{ mb: 2 }}>
+                        {passwordFeedback.error}
+                      </Alert>
+                    )}
+                    {passwordFeedback.success && (
+                      <Alert severity="success" sx={{ mb: 2 }}>
+                        {passwordFeedback.success}
+                      </Alert>
+                    )}
+                    <Box
+                      sx={{
+                        display: 'grid',
+                        gap: 2,
+                        gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))' },
+                        alignItems: 'center',
+                      }}
                     >
-                      {passwordLoading ? 'Wird aktualisiert…' : 'Passwort speichern'}
-                    </Button>
+                      <TextField
+                        label="Aktuelles Passwort"
+                        type="password"
+                        value={passwordForm.current}
+                        onChange={(event) => setPasswordForm((prev) => ({ ...prev, current: event.target.value }))}
+                        fullWidth
+                      />
+                      <TextField
+                        label="Neues Passwort"
+                        type="password"
+                        value={passwordForm.next}
+                        onChange={(event) => setPasswordForm((prev) => ({ ...prev, next: event.target.value }))}
+                        fullWidth
+                      />
+                      <Box />
+                      <Box sx={{ display: 'flex', justifyContent: { xs: 'flex-start', sm: 'flex-end' } }}>
+                        <Button
+                          variant="contained"
+                          color="primary"
+                          onClick={handlePasswordChange}
+                          disabled={passwordLoading}
+                        >
+                          {passwordLoading ? 'Wird aktualisiert…' : 'Passwort speichern'}
+                        </Button>
+                      </Box>
+                    </Box>
                   </Box>
-                </Box>
-              </Box>
+                </>
+              )}
 
               <Divider />
 
@@ -818,17 +851,22 @@ export default function Profile() {
         <DialogTitle>Account löschen</DialogTitle>
         <DialogContent>
           <DialogContentText>
-            Bitte bestätige die Löschung, indem du dein aktuelles Passwort eingibst.
+            {isEmailPasswordUser 
+              ? 'Bitte bestätige die Löschung, indem du dein aktuelles Passwort eingibst.'
+              : 'Bist du sicher, dass du deinen Account endgültig löschen möchtest? Diese Aktion kann nicht rückgängig gemacht werden.'
+            }
           </DialogContentText>
-          <TextField
-            autoFocus
-            margin="dense"
-            label="Passwort"
-            type="password"
-            fullWidth
-            value={deletePassword}
-            onChange={(event) => setDeletePassword(event.target.value)}
-          />
+          {isEmailPasswordUser && (
+            <TextField
+              autoFocus
+              margin="dense"
+              label="Passwort"
+              type="password"
+              fullWidth
+              value={deletePassword}
+              onChange={(event) => setDeletePassword(event.target.value)}
+            />
+          )}
           {deleteError && (
             <Alert severity="error" sx={{ mt: 2 }}>
               {deleteError}
