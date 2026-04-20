@@ -27,12 +27,20 @@ export default function Sidebar() {
   const navigate = useNavigate();
   const location = useLocation();
   const { confirmNavigation } = useNavigation();
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => {
+    const saved = localStorage.getItem('sidebarCollapsed');
+    return saved !== null ? JSON.parse(saved) : false;
+  });
   const [authUser, setAuthUser] = useState<User | null>(auth.currentUser);
   const [logoUrl, setLogoUrl] = useState<string>('');
   const [logoVersion, setLogoVersion] = useState<number | null>(null);
 
   const drawerWidth = collapsed ? drawerWidthCollapsed : drawerWidthExpanded;
+
+  // Speichere collapsed-Status im localStorage
+  useEffect(() => {
+    localStorage.setItem('sidebarCollapsed', JSON.stringify(collapsed));
+  }, [collapsed]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {

@@ -58,6 +58,7 @@ import RichTextEditor from '../components/RichTextEditor';
 import VideoRecorder from '../components/VideoRecorder';
 import VideoEditor from '../components/VideoEditor';
 import { useNavigation } from '../context/NavigationContext';
+import { processVideoForStreaming } from '../utils/videoProcessing';
 
 const getStatusStyles = (brandColor: string) => ({
   published: {
@@ -157,6 +158,8 @@ const LessonEditor = () => {
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [uploadingVideo, setUploadingVideo] = useState(false);
+  const [processingVideo, setProcessingVideo] = useState(false);
+  const [processProgress, setProcessProgress] = useState(0);
   const [videoUploadMode, setVideoUploadMode] = useState<'upload' | 'record'>('upload');
   const [showVideoRecorder, setShowVideoRecorder] = useState(false);
   const [showVideoEditor, setShowVideoEditor] = useState(false);
@@ -562,12 +565,7 @@ const LessonEditor = () => {
     setUploadingVideo(true);
     setPageError(null);
     try {
-      const fileExtension = videoFile.name.split('.').pop();
-      const storageRef = ref(storage, `users/${currentUser.uid}/courses/${courseId}/lessons/${lessonId}/lesson.${fileExtension}`);
-      await uploadBytes(storageRef, videoFile);
-      const downloadUrl = await getDownloadURL(storageRef);
-      
-      // Berechne die Videodauer
+      // Berechne die Videodauer VOR der Konvertierung (vom Original)
       const videoDuration = await new Promise<number>((resolve) => {
         const video = document.createElement('video');
         video.preload = 'metadata';
@@ -580,6 +578,19 @@ const LessonEditor = () => {
         };
         video.src = URL.createObjectURL(videoFile);
       });
+
+      // Konvertiere zu streamingfähigem MP4 mit faststart
+      setProcessingVideo(true);
+      setProcessProgress(0);
+      const streamableBlob = await processVideoForStreaming(videoFile, setProcessProgress);
+      setProcessingVideo(false);
+
+      const storageRef = ref(storage, `users/${currentUser.uid}/courses/${courseId}/lessons/${lessonId}/lesson.mp4`);
+      await uploadBytes(storageRef, streamableBlob, {
+        contentType: 'video/mp4',
+        cacheControl: 'public, max-age=31536000',
+      });
+      const downloadUrl = await getDownloadURL(storageRef);
       
       setVideoUrl(downloadUrl);
       setVideoFile(null);
@@ -602,6 +613,7 @@ const LessonEditor = () => {
       setPageError('Video konnte nicht hochgeladen werden.');
     } finally {
       setUploadingVideo(false);
+      setProcessingVideo(false);
     }
   };
 
@@ -705,8 +717,17 @@ const LessonEditor = () => {
     setPageError(null);
     
     try {
-      const storageRef = ref(storage, `users/${currentUser.uid}/courses/${courseId}/lessons/${lessonId}/lesson.webm`);
-      await uploadBytes(storageRef, videoBlob);
+      // Konvertiere WebM zu streamingfähigem MP4 mit faststart
+      setProcessingVideo(true);
+      setProcessProgress(0);
+      const streamableBlob = await processVideoForStreaming(videoBlob, setProcessProgress);
+      setProcessingVideo(false);
+
+      const storageRef = ref(storage, `users/${currentUser.uid}/courses/${courseId}/lessons/${lessonId}/lesson.mp4`);
+      await uploadBytes(storageRef, streamableBlob, {
+        contentType: 'video/mp4',
+        cacheControl: 'public, max-age=31536000',
+      });
       const downloadUrl = await getDownloadURL(storageRef);
       setVideoUrl(downloadUrl);
       
@@ -733,6 +754,7 @@ const LessonEditor = () => {
       setPageError('Video konnte nicht hochgeladen werden.');
     } finally {
       setUploadingVideo(false);
+      setProcessingVideo(false);
     }
   };
 
@@ -746,8 +768,12 @@ const LessonEditor = () => {
     setPageError(null);
     
     try {
-      const storageRef = ref(storage, `users/${currentUser.uid}/courses/${courseId}/lessons/${lessonId}/lesson.webm`);
-      await uploadBytes(storageRef, videoBlob);
+      // VideoEditor gibt bereits MP4 mit faststart zurück
+      const storageRef = ref(storage, `users/${currentUser.uid}/courses/${courseId}/lessons/${lessonId}/lesson.mp4`);
+      await uploadBytes(storageRef, videoBlob, {
+        contentType: 'video/mp4',
+        cacheControl: 'public, max-age=31536000',
+      });
       const downloadUrl = await getDownloadURL(storageRef);
       setVideoUrl(downloadUrl);
       
@@ -1321,7 +1347,14 @@ const LessonEditor = () => {
                             onClick={handleUploadVideo}
                             disabled={uploadingVideo}
                           >
-                            {uploadingVideo ? <CircularProgress size={24} /> : 'Hochladen'}
+                            {uploadingVideo ? (
+                              <Stack direction="row" spacing={1} alignItems="center">
+                                <CircularProgress size={20} />
+                                <Typography variant="body2">
+                                  {processingVideo ? `Wird optimiert… ${processProgress}%` : 'Wird hochgeladen…'}
+                                </Typography>
+                              </Stack>
+                            ) : 'Hochladen'}
                           </Button>
                         </Box>
                       )}

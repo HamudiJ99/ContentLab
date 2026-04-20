@@ -278,20 +278,21 @@ const Courses = () => {
               collection(db, 'users', currentUser.uid, 'courses', docSnapshot.id, 'chapters')
             );
             
-            for (const chapterDoc of chaptersSnapshot.docs) {
-              const lessonsSnapshot = await getDocs(
-                collection(chapterDoc.ref, 'lessons')
-              );
-              
-              for (const lessonDoc of lessonsSnapshot.docs) {
+            // Load all lessons in parallel
+            const lessonSnapshots = await Promise.all(
+              chaptersSnapshot.docs.map(chapterDoc =>
+                getDocs(collection(chapterDoc.ref, 'lessons'))
+              )
+            );
+
+            lessonSnapshots.forEach((lessonsSnapshot) => {
+              lessonsSnapshot.docs.forEach((lessonDoc) => {
                 const lessonData = lessonDoc.data();
-                
-                // Addiere videoDuration wenn vorhanden
                 if (lessonData.videoDuration && typeof lessonData.videoDuration === 'number' && isFinite(lessonData.videoDuration)) {
                   totalSeconds += lessonData.videoDuration;
                 }
-              }
-            }
+              });
+            });
             
             // Konvertiere Sekunden zu MM:SS oder HH:MM:SS Format
             let calculatedDuration = '0:00';

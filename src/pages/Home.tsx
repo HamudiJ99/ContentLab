@@ -243,10 +243,13 @@ export default function Home() {
     try {
       setLoading(true);
 
-      // Load hidden courses
-      const hiddenCoursesSnapshot = await getDocs(
-        collection(db, 'users', userId, 'hiddenCourses')
-      );
+      // Phase 1: Load top-level collections in parallel
+      const [hiddenCoursesSnapshot, coursesSnapshot, enrollmentsSnapshot] = await Promise.all([
+        getDocs(collection(db, 'users', userId, 'hiddenCourses')),
+        getDocs(collection(db, 'users', userId, 'courses')),
+        getDocs(collection(db, 'users', userId, 'enrollments')),
+      ]);
+
       const hiddenCourseIds = new Set<string>();
       hiddenCoursesSnapshot.docs.forEach((docSnapshot) => {
         const data = docSnapshot.data();
@@ -255,224 +258,112 @@ export default function Home() {
         }
       });
 
-      // Load user's courses
-      const coursesRef = collection(db, 'users', userId, 'courses');
-      const coursesSnapshot = await getDocs(coursesRef);
-
       const coursesData: Course[] = [];
       const attentionData: AttentionItem[] = [];
       const activityData: ActivityItem[] = [];
       let totalLessonsCount = 0;
       let completedLessonsCount = 0;
 
-      for (const courseDoc of coursesSnapshot.docs) {
-        if (hiddenCourseIds.has(courseDoc.id)) continue;
+      // Phase 2: Process own courses in parallel
+      const visibleCourseDocs = coursesSnapshot.docs.filter(d => !hiddenCourseIds.has(d.id));
 
-        const courseData = courseDoc.data();
-        const chaptersSnapshot = await getDocs(
-          collection(db, 'users', userId, 'courses', courseDoc.id, 'chapters')
-        );
+      const ownCourseResults = await Promise.all(
+        visibleCourseDocs.map(async (courseDoc) => {
+          const courseData = courseDoc.data();
 
-        const publishedChapters = chaptersSnapshot.docs.filter(
-          (doc) => doc.data().status === 'published'
-        );
-
-        let publishedLessons = 0;
-        let draftLessons = 0;
-        const publishedLessonIds: string[] = [];
-        const lessonTitles: Record<string, string> = {};
-
-        for (const chapterDoc of chaptersSnapshot.docs) {
-          const lessonsSnapshot = await getDocs(collection(chapterDoc.ref, 'lessons'));
-          
-          lessonsSnapshot.docs.forEach((lessonDoc) => {
-            const lessonData = lessonDoc.data();
-            if (lessonData.type !== 'subchapter') {
-              if (lessonData.status === 'published') {
-                publishedLessons++;
-                publishedLessonIds.push(lessonDoc.id);
-                lessonTitles[lessonDoc.id] = lessonData.title || 'Unbenannte Lektion';
-              } else if (lessonData.status === 'draft') {
-                draftLessons++;
-              }
-            }
-          });
-        }
-
-        totalLessonsCount += publishedLessons;
-
-        // Load progress for this course
-        const progressDoc = await getDoc(
-          doc(db, 'users', userId, 'courseProgress', courseDoc.id)
-        );
-
-        let progress = 0;
-        let completedCount = 0;
-        if (progressDoc.exists()) {
-          const progressData = progressDoc.data();
-          const validCompleted = Array.isArray(progressData.completedLessons)
-            ? progressData.completedLessons.filter((id: string) => publishedLessonIds.includes(id))
-            : [];
-          completedCount = validCompleted.length;
-          completedLessonsCount += completedCount;
-
-          if (publishedLessons > 0) {
-            progress = Math.round((completedCount / publishedLessons) * 100);
-          }
-
-          // Load lesson completed activities
-          const lessonCompletedAt = progressData.lessonCompletedAt;
-          if (lessonCompletedAt && typeof lessonCompletedAt === 'object') {
-            Object.entries(lessonCompletedAt).forEach(([lessonId, timestamp]) => {
-              if (publishedLessonIds.includes(lessonId) && timestamp) {
-                const ts = (timestamp as { toDate?: () => Date });
-                activityData.push({
-                  id: `lesson-${courseDoc.id}-${lessonId}`,
-                  type: 'lesson_completed',
-                  title: `"${lessonTitles[lessonId] || 'Lektion'}" abgeschlossen`,
-                  subtitle: courseData.title || 'Kurs',
-                  timestamp: ts.toDate?.() || new Date(),
-                  icon: 'check',
-                  courseId: courseDoc.id,
-                });
-              }
-            });
-          }
-        }
-
-        const course: Course = {
-          id: courseDoc.id,
-          title: courseData.title || 'Unbenannter Kurs',
-          description: courseData.description || '',
-          thumbnailUrl: courseData.coverImageUrl,
-          coverColor: courseData.coverColor,
-          category: courseData.category || 'Allgemein',
-          lessonsCount: publishedLessons,
-          chaptersCount: publishedChapters.length,
-          draftLessons,
-          progress,
-          createdAt: courseData.createdAt?.toDate?.(),
-        };
-
-        coursesData.push(course);
-
-        // Check for attention items
-        if (publishedLessons === 0 && chaptersSnapshot.docs.length > 0) {
-          attentionData.push({
-            id: `empty-${courseDoc.id}`,
-            type: 'empty_course',
-            title: course.title,
-            description: 'Dieser Kurs hat noch keine veröffentlichten Lektionen',
-            courseId: courseDoc.id,
-            severity: 'warning',
-            action: 'Inhalt hinzufügen',
-          });
-        }
-
-        if (draftLessons > 0) {
-          attentionData.push({
-            id: `draft-${courseDoc.id}`,
-            type: 'draft_lessons',
-            title: course.title,
-            description: `${draftLessons} Lektion${draftLessons > 1 ? 'en' : ''} im Entwurf`,
-            courseId: courseDoc.id,
-            severity: 'info',
-            action: 'Veröffentlichen',
-          });
-        }
-
-        // Add to activity (course created)
-        if (courseData.createdAt) {
-          activityData.push({
-            id: `created-${courseDoc.id}`,
-            type: 'course_created',
-            title: `Kurs "${course.title}" erstellt`,
-            subtitle: course.category,
-            timestamp: courseData.createdAt.toDate?.() || new Date(),
-            icon: 'add',
-          });
-        }
-
-        // Course completed
-        if (progress === 100) {
-          activityData.push({
-            id: `completed-${courseDoc.id}`,
-            type: 'course_completed',
-            title: `"${course.title}" abgeschlossen`,
-            subtitle: `${publishedLessons} Lektionen`,
-            timestamp: progressDoc.data()?.lastAccessedAt?.toDate?.() || new Date(),
-            icon: 'trophy',
-          });
-        }
-      }
-
-      // Load enrolled courses
-      const enrollmentsSnapshot = await getDocs(
-        collection(db, 'users', userId, 'enrollments')
-      );
-
-      for (const enrollmentDoc of enrollmentsSnapshot.docs) {
-        const enrollmentData = enrollmentDoc.data();
-        const ownerId = enrollmentData.ownerId;
-        const courseId = enrollmentDoc.id;
-
-        if (hiddenCourseIds.has(courseId) || !ownerId) continue;
-
-        try {
-          const courseDocSnapshot = await getDoc(
-            doc(db, 'users', ownerId, 'courses', courseId)
-          );
-
-          if (!courseDocSnapshot.exists()) continue;
-
-          const courseData = courseDocSnapshot.data();
-          const chaptersSnapshot = await getDocs(
-            collection(db, 'users', ownerId, 'courses', courseId, 'chapters')
-          );
+          // Load chapters and progress in parallel
+          const [chaptersSnapshot, progressDoc] = await Promise.all([
+            getDocs(collection(db, 'users', userId, 'courses', courseDoc.id, 'chapters')),
+            getDoc(doc(db, 'users', userId, 'courseProgress', courseDoc.id)),
+          ]);
 
           const publishedChapters = chaptersSnapshot.docs.filter(
-            (doc) => doc.data().status === 'published'
+            (d) => d.data().status === 'published'
           );
 
-          if (publishedChapters.length === 0) continue;
+          // Load all lessons in parallel
+          const lessonSnapshots = await Promise.all(
+            chaptersSnapshot.docs.map(chapterDoc => getDocs(collection(chapterDoc.ref, 'lessons')))
+          );
 
           let publishedLessons = 0;
+          let draftLessons = 0;
           const publishedLessonIds: string[] = [];
+          const lessonTitles: Record<string, string> = {};
 
-          for (const chapterDoc of publishedChapters) {
-            const lessonsSnapshot = await getDocs(collection(chapterDoc.ref, 'lessons'));
+          lessonSnapshots.forEach((lessonsSnapshot) => {
             lessonsSnapshot.docs.forEach((lessonDoc) => {
               const lessonData = lessonDoc.data();
-              if (lessonData.status === 'published' && lessonData.type !== 'subchapter') {
-                publishedLessons++;
-                publishedLessonIds.push(lessonDoc.id);
+              if (lessonData.type !== 'subchapter') {
+                if (lessonData.status === 'published') {
+                  publishedLessons++;
+                  publishedLessonIds.push(lessonDoc.id);
+                  lessonTitles[lessonDoc.id] = lessonData.title || 'Unbenannte Lektion';
+                } else if (lessonData.status === 'draft') {
+                  draftLessons++;
+                }
               }
             });
-          }
-
-          if (publishedLessons === 0) continue;
-
-          totalLessonsCount += publishedLessons;
-
-          const progressDoc = await getDoc(
-            doc(db, 'users', userId, 'courseProgress', courseId)
-          );
+          });
 
           let progress = 0;
+          let completedCount = 0;
+          const localActivities: ActivityItem[] = [];
+
           if (progressDoc.exists()) {
             const progressData = progressDoc.data();
             const validCompleted = Array.isArray(progressData.completedLessons)
               ? progressData.completedLessons.filter((id: string) => publishedLessonIds.includes(id))
               : [];
-            completedLessonsCount += validCompleted.length;
+            completedCount = validCompleted.length;
 
             if (publishedLessons > 0) {
-              progress = Math.round((validCompleted.length / publishedLessons) * 100);
+              progress = Math.round((completedCount / publishedLessons) * 100);
+            }
+
+            const lessonCompletedAt = progressData.lessonCompletedAt;
+            if (lessonCompletedAt && typeof lessonCompletedAt === 'object') {
+              Object.entries(lessonCompletedAt).forEach(([lessonId, timestamp]) => {
+                if (publishedLessonIds.includes(lessonId) && timestamp) {
+                  const ts = (timestamp as { toDate?: () => Date });
+                  localActivities.push({
+                    id: `lesson-${courseDoc.id}-${lessonId}`,
+                    type: 'lesson_completed',
+                    title: `"${lessonTitles[lessonId] || 'Lektion'}" abgeschlossen`,
+                    subtitle: courseData.title || 'Kurs',
+                    timestamp: ts.toDate?.() || new Date(),
+                    icon: 'check',
+                    courseId: courseDoc.id,
+                  });
+                }
+              });
+            }
+
+            if (progress === 100) {
+              localActivities.push({
+                id: `completed-${courseDoc.id}`,
+                type: 'course_completed',
+                title: `"${courseData.title || 'Unbenannter Kurs'}" abgeschlossen`,
+                subtitle: `${publishedLessons} Lektionen`,
+                timestamp: progressDoc.data()?.lastAccessedAt?.toDate?.() || new Date(),
+                icon: 'trophy',
+              });
             }
           }
 
-          coursesData.push({
-            id: courseId,
+          if (courseData.createdAt) {
+            localActivities.push({
+              id: `created-${courseDoc.id}`,
+              type: 'course_created',
+              title: `Kurs "${courseData.title || 'Unbenannter Kurs'}" erstellt`,
+              subtitle: courseData.category || 'Allgemein',
+              timestamp: courseData.createdAt.toDate?.() || new Date(),
+              icon: 'add',
+            });
+          }
+
+          const course: Course = {
+            id: courseDoc.id,
             title: courseData.title || 'Unbenannter Kurs',
             description: courseData.description || '',
             thumbnailUrl: courseData.coverImageUrl,
@@ -480,13 +371,140 @@ export default function Home() {
             category: courseData.category || 'Allgemein',
             lessonsCount: publishedLessons,
             chaptersCount: publishedChapters.length,
-            draftLessons: 0,
+            draftLessons,
             progress,
             createdAt: courseData.createdAt?.toDate?.(),
-          });
-        } catch (error) {
-          console.error('Fehler beim Laden des enrolled Kurses:', error);
-        }
+          };
+
+          const localAttention: AttentionItem[] = [];
+          if (publishedLessons === 0 && chaptersSnapshot.docs.length > 0) {
+            localAttention.push({
+              id: `empty-${courseDoc.id}`,
+              type: 'empty_course',
+              title: course.title,
+              description: 'Dieser Kurs hat noch keine veröffentlichten Lektionen',
+              courseId: courseDoc.id,
+              severity: 'warning',
+              action: 'Inhalt hinzufügen',
+            });
+          }
+          if (draftLessons > 0) {
+            localAttention.push({
+              id: `draft-${courseDoc.id}`,
+              type: 'draft_lessons',
+              title: course.title,
+              description: `${draftLessons} Lektion${draftLessons > 1 ? 'en' : ''} im Entwurf`,
+              courseId: courseDoc.id,
+              severity: 'info',
+              action: 'Veröffentlichen',
+            });
+          }
+
+          return { course, activities: localActivities, attention: localAttention, publishedLessons, completedCount };
+        })
+      );
+
+      for (const result of ownCourseResults) {
+        coursesData.push(result.course);
+        activityData.push(...result.activities);
+        attentionData.push(...result.attention);
+        totalLessonsCount += result.publishedLessons;
+        completedLessonsCount += result.completedCount;
+      }
+
+      // Phase 3: Process enrolled courses in parallel
+      const visibleEnrollments = enrollmentsSnapshot.docs.filter(
+        d => !hiddenCourseIds.has(d.id) && d.data().ownerId
+      );
+
+      const enrolledResults = await Promise.all(
+        visibleEnrollments.map(async (enrollmentDoc) => {
+          const enrollmentData = enrollmentDoc.data();
+          const ownerId = enrollmentData.ownerId;
+          const courseId = enrollmentDoc.id;
+
+          try {
+            const courseDocSnapshot = await getDoc(
+              doc(db, 'users', ownerId, 'courses', courseId)
+            );
+
+            if (!courseDocSnapshot.exists()) return null;
+
+            const courseData = courseDocSnapshot.data();
+            const chaptersSnapshot = await getDocs(
+              collection(db, 'users', ownerId, 'courses', courseId, 'chapters')
+            );
+
+            const publishedChapters = chaptersSnapshot.docs.filter(
+              (d) => d.data().status === 'published'
+            );
+
+            if (publishedChapters.length === 0) return null;
+
+            // Load all lessons and progress in parallel
+            const [progressDoc, ...lessonSnapshots] = await Promise.all([
+              getDoc(doc(db, 'users', userId, 'courseProgress', courseId)),
+              ...publishedChapters.map(chapterDoc => getDocs(collection(chapterDoc.ref, 'lessons'))),
+            ]);
+
+            let publishedLessons = 0;
+            const publishedLessonIds: string[] = [];
+
+            lessonSnapshots.forEach((lessonsSnapshot) => {
+              lessonsSnapshot.docs.forEach((lessonDoc) => {
+                const lessonData = lessonDoc.data();
+                if (lessonData.status === 'published' && lessonData.type !== 'subchapter') {
+                  publishedLessons++;
+                  publishedLessonIds.push(lessonDoc.id);
+                }
+              });
+            });
+
+            if (publishedLessons === 0) return null;
+
+            let progress = 0;
+            let localCompletedCount = 0;
+            if (progressDoc.exists()) {
+              const progressData = progressDoc.data();
+              const validCompleted = Array.isArray(progressData.completedLessons)
+                ? progressData.completedLessons.filter((id: string) => publishedLessonIds.includes(id))
+                : [];
+              localCompletedCount = validCompleted.length;
+
+              if (publishedLessons > 0) {
+                progress = Math.round((validCompleted.length / publishedLessons) * 100);
+              }
+            }
+
+            return {
+              course: {
+                id: courseId,
+                title: courseData.title || 'Unbenannter Kurs',
+                description: courseData.description || '',
+                thumbnailUrl: courseData.coverImageUrl,
+                coverColor: courseData.coverColor,
+                category: courseData.category || 'Allgemein',
+                lessonsCount: publishedLessons,
+                chaptersCount: publishedChapters.length,
+                draftLessons: 0,
+                progress,
+                createdAt: courseData.createdAt?.toDate?.(),
+              } as Course,
+              publishedLessons,
+              completedCount: localCompletedCount,
+            };
+          } catch (error) {
+            console.error('Fehler beim Laden des enrolled Kurses:', error);
+            return null;
+          }
+        })
+      );
+
+      for (const result of enrolledResults) {
+        if (!result) continue;
+        coursesData.push(result.course);
+        totalLessonsCount += result.publishedLessons;
+        completedLessonsCount += result.completedCount;
       }
 
       // Sort courses
@@ -496,17 +514,22 @@ export default function Home() {
         return b.progress - a.progress;
       });
 
-      // Load course invitations (pending = received, accepted = member_added)
+      // Phase 4: Load invitations in parallel
       if (auth.currentUser?.email) {
         const normalizedEmail = auth.currentUser.email.toLowerCase();
-        
-        // Pending invitations for current user
-        const invitationsQuery = query(
-          collection(db, 'courseInvitations'),
-          where('inviteeEmail', '==', normalizedEmail)
-        );
-        const invitationsSnapshot = await getDocs(invitationsQuery);
-        
+
+        const [invitationsSnapshot, acceptedSnapshot] = await Promise.all([
+          getDocs(query(
+            collection(db, 'courseInvitations'),
+            where('inviteeEmail', '==', normalizedEmail)
+          )),
+          getDocs(query(
+            collection(db, 'courseInvitations'),
+            where('ownerId', '==', userId),
+            where('status', '==', 'accepted')
+          )),
+        ]);
+
         invitationsSnapshot.docs.forEach((invDoc) => {
           const invData = invDoc.data();
           if (invData.status === 'pending' && invData.createdAt) {
@@ -523,14 +546,6 @@ export default function Home() {
           }
         });
 
-        // Accepted invitations where current user is the owner (member_added)
-        const acceptedInvitationsQuery = query(
-          collection(db, 'courseInvitations'),
-          where('ownerId', '==', userId),
-          where('status', '==', 'accepted')
-        );
-        const acceptedSnapshot = await getDocs(acceptedInvitationsQuery);
-        
         acceptedSnapshot.docs.forEach((invDoc) => {
           const invData = invDoc.data();
           if (invData.acceptedAt) {

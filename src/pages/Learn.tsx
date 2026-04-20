@@ -812,6 +812,7 @@ export default function Learn() {
                                   <video
                                     src={currentLesson.videoUrl}
                                     controls
+                                    preload="auto"
                                     style={{ width: '100%', height: '100%', objectFit: 'contain' }}
                                   />
                                 </Box>

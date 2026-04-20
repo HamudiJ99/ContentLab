@@ -132,7 +132,10 @@ export default function Dashboard() {
   const [courseProgress, setCourseProgress] = useState<Record<string, CourseProgress>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState(0);
+  const [activeTab, setActiveTab] = useState(() => {
+    const saved = localStorage.getItem('dashboardActiveTab');
+    return saved !== null ? parseInt(saved, 10) : 0;
+  });
   const [hiddenCourses, setHiddenCourses] = useState<Map<string, { mode: 'hidden' | 'removed' }>>(new Map());
   const [showHiddenCourses, setShowHiddenCourses] = useState(false);
   const [menuAnchorEl, setMenuAnchorEl] = useState<null | HTMLElement>(null);
@@ -148,6 +151,11 @@ export default function Dashboard() {
   // Search functionality
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+
+  // Speichere activeTab im localStorage
+  useEffect(() => {
+    localStorage.setItem('dashboardActiveTab', activeTab.toString());
+  }, [activeTab]);
 
   // Color utilities
   const getContrastColor = (bgColor: string): string => {
@@ -188,50 +196,53 @@ export default function Dashboard() {
     const loadData = async () => {
       setLoading(true);
       try {
-        // Lade alle Kurse
-        const coursesSnapshot = await getDocs(
-          collection(db, 'users', currentUser.uid, 'courses')
-        );
+        // Phase 1: Load all top-level collections in parallel
+        const [coursesSnapshot, enrollmentsSnapshot, hiddenSnapshot] = await Promise.all([
+          getDocs(collection(db, 'users', currentUser.uid, 'courses')),
+          getDocs(collection(db, 'users', currentUser.uid, 'enrollments')),
+          getDocs(collection(db, 'users', currentUser.uid, 'hiddenCourses')),
+        ]);
         
-        const loadedCourses: Course[] = [];
-        
-        for (const courseDoc of coursesSnapshot.docs) {
-          const courseData = courseDoc.data();
-          
-          // Lade alle Kapitel und filtere veröffentlichte
-          const chaptersSnapshot = await getDocs(
-            collection(db, 'users', currentUser.uid, 'courses', courseDoc.id, 'chapters')
-          );
-
-          const publishedChapters = chaptersSnapshot.docs.filter(
-            (doc) => doc.data().status === 'published'
-          );
-
-          if (publishedChapters.length === 0) continue;
-
-          // Zähle veröffentlichte Lektionen und sammle Titel für Suche
-          let publishedLessons = 0;
-          const chapterTitles: string[] = [];
-          const lessonTitles: string[] = [];
-          
-          for (const chapterDoc of publishedChapters) {
-            const chapterData = chapterDoc.data();
-            if (chapterData.title) chapterTitles.push(chapterData.title);
+        // Phase 2: Process own courses in parallel
+        const ownCourseResults = await Promise.all(
+          coursesSnapshot.docs.map(async (courseDoc) => {
+            const courseData = courseDoc.data();
             
-            const lessonsSnapshot = await getDocs(
-              collection(chapterDoc.ref, 'lessons')
+            const chaptersSnapshot = await getDocs(
+              collection(db, 'users', currentUser.uid, 'courses', courseDoc.id, 'chapters')
             );
-            lessonsSnapshot.docs.forEach((lessonDoc) => {
-              const lessonData = lessonDoc.data();
-              if (lessonData.status === 'published' && lessonData.type !== 'subchapter') {
-                publishedLessons++;
-                if (lessonData.title) lessonTitles.push(lessonData.title);
-              }
-            });
-          }
 
-          if (publishedLessons > 0) {
-            loadedCourses.push({
+            const publishedChapters = chaptersSnapshot.docs.filter(
+              (d) => d.data().status === 'published'
+            );
+
+            if (publishedChapters.length === 0) return null;
+
+            // Load all lessons in parallel
+            const lessonSnapshots = await Promise.all(
+              publishedChapters.map(chapterDoc => getDocs(collection(chapterDoc.ref, 'lessons')))
+            );
+
+            let publishedLessons = 0;
+            const chapterTitles: string[] = [];
+            const lessonTitles: string[] = [];
+
+            publishedChapters.forEach((chapterDoc, i) => {
+              const chapterData = chapterDoc.data();
+              if (chapterData.title) chapterTitles.push(chapterData.title);
+              
+              lessonSnapshots[i].docs.forEach((lessonDoc) => {
+                const lessonData = lessonDoc.data();
+                if (lessonData.status === 'published' && lessonData.type !== 'subchapter') {
+                  publishedLessons++;
+                  if (lessonData.title) lessonTitles.push(lessonData.title);
+                }
+              });
+            });
+
+            if (publishedLessons === 0) return null;
+
+            return {
               id: courseDoc.id,
               title: courseData.title ?? 'Unbenannter Kurs',
               description: courseData.description ?? '',
@@ -243,94 +254,84 @@ export default function Dashboard() {
               ownerId: currentUser.uid,
               chapterTitles,
               lessonTitles,
-            });
-          }
-        }
-
-        // Lade Kurse aus Teilnahmen (Einladungen)
-        const enrollmentsSnapshot = await getDocs(
-          collection(db, 'users', currentUser.uid, 'enrollments')
+            } as Course;
+          })
         );
-        const sharedCourses: Course[] = [];
-        for (const enrollmentDoc of enrollmentsSnapshot.docs) {
-          const data = enrollmentDoc.data();
-          const ownerId = data.ownerId;
-          const courseId = data.courseId ?? enrollmentDoc.id;
-          if (!ownerId || !courseId) continue;
 
-          let sharedLessonCount = normalizeCount(
-            data.lessons ??
-              data.lessonCount ??
-              data.totalLessons ??
-              data.expectedLessonCount ??
-              data.progressLessonCount ??
-              0
-          );
-          let sharedChapterCount = normalizeCount(data.chapters ?? data.chapterCount);
-          let sharedChapterTitles: string[] = [];
-          let sharedLessonTitles: string[] = [];
+        const loadedCourses = ownCourseResults.filter((c): c is Course => c !== null);
 
-          if ((sharedLessonCount === 0 || sharedChapterCount === 0) && ownerId) {
-            try {
-              const ownerCourseRef = doc(db, 'users', ownerId, 'courses', courseId);
-              const ownerCourseSnapshot = await getDoc(ownerCourseRef);
-              if (ownerCourseSnapshot.exists()) {
-                const chaptersSnapshot = await getDocs(collection(ownerCourseRef, 'chapters'));
-                const publishedChapters = chaptersSnapshot.docs.filter((chapterDoc) => chapterDoc.data().status === 'published');
-                sharedChapterCount = publishedChapters.length;
-                
-                for (const chapterDoc of publishedChapters) {
-                  const chapterData = chapterDoc.data();
-                  if (chapterData.title) sharedChapterTitles.push(chapterData.title);
+        // Phase 3: Process enrolled courses in parallel
+        const sharedCourseResults = await Promise.all(
+          enrollmentsSnapshot.docs.map(async (enrollmentDoc) => {
+            const data = enrollmentDoc.data();
+            const ownerId = data.ownerId;
+            const courseId = data.courseId ?? enrollmentDoc.id;
+            if (!ownerId || !courseId) return null;
+
+            let sharedLessonCount = normalizeCount(
+              data.lessons ?? data.lessonCount ?? data.totalLessons ??
+              data.expectedLessonCount ?? data.progressLessonCount ?? 0
+            );
+            let sharedChapterCount = normalizeCount(data.chapters ?? data.chapterCount);
+            let sharedChapterTitles: string[] = [];
+            let sharedLessonTitles: string[] = [];
+
+            if ((sharedLessonCount === 0 || sharedChapterCount === 0) && ownerId) {
+              try {
+                const ownerCourseRef = doc(db, 'users', ownerId, 'courses', courseId);
+                const ownerCourseSnapshot = await getDoc(ownerCourseRef);
+                if (ownerCourseSnapshot.exists()) {
+                  const chaptersSnapshot = await getDocs(collection(ownerCourseRef, 'chapters'));
+                  const publishedChapters = chaptersSnapshot.docs.filter((chapterDoc) => chapterDoc.data().status === 'published');
+                  sharedChapterCount = publishedChapters.length;
                   
-                  const lessonsSnapshot = await getDocs(collection(chapterDoc.ref, 'lessons'));
-                  lessonsSnapshot.docs.forEach((lessonDoc) => {
-                    const lessonData = lessonDoc.data();
-                    if (lessonData.status === 'published' && lessonData.type !== 'subchapter') {
-                      if (sharedLessonCount === 0) sharedLessonCount++;
-                      if (lessonData.title) sharedLessonTitles.push(lessonData.title);
-                    }
-                  });
-                }
-                if (sharedLessonCount === 0) {
+                  // Load all lessons in parallel
+                  const lessonSnapshots = await Promise.all(
+                    publishedChapters.map(chapterDoc => getDocs(collection(chapterDoc.ref, 'lessons')))
+                  );
+
                   let lessonCount = 0;
-                  for (const chapterDoc of publishedChapters) {
-                    const lessonsSnapshot = await getDocs(collection(chapterDoc.ref, 'lessons'));
-                    lessonCount += lessonsSnapshot.docs.filter((lessonDoc) => {
+                  publishedChapters.forEach((chapterDoc, i) => {
+                    const chapterData = chapterDoc.data();
+                    if (chapterData.title) sharedChapterTitles.push(chapterData.title);
+                    
+                    lessonSnapshots[i].docs.forEach((lessonDoc) => {
                       const lessonData = lessonDoc.data();
-                      return lessonData.status === 'published' && lessonData.type !== 'subchapter';
-                    }).length;
-                  }
-                  sharedLessonCount = lessonCount;
+                      if (lessonData.status === 'published' && lessonData.type !== 'subchapter') {
+                        lessonCount++;
+                        if (lessonData.title) sharedLessonTitles.push(lessonData.title);
+                      }
+                    });
+                  });
+                  if (sharedLessonCount === 0) sharedLessonCount = lessonCount;
                 }
+              } catch (sharedDetailError) {
+                console.warn('Gemeinsamer Kurs konnte nicht synchronisiert werden', sharedDetailError);
               }
-            } catch (sharedDetailError) {
-              console.warn('Gemeinsamer Kurs konnte nicht synchronisiert werden', sharedDetailError);
             }
-          }
 
-          sharedCourses.push({
-            id: courseId,
-            title: data.courseTitle ?? 'Kurs',
-            description: data.courseDescription ?? '',
-            categoryIds: [],
-            coverImageUrl: data.coverImageUrl ?? undefined,
-            coverColor: data.coverColor ?? undefined,
-            chapters: sharedChapterCount,
-            lessons: sharedLessonCount,
-            ownerId,
-            ownerName: data.ownerName ?? data.ownerEmail ?? null,
-            ownerEmail: data.ownerEmail ?? null,
-            isShared: true,
-            startedAt: data.startedAt?.toDate?.() ?? null,
-            chapterTitles: sharedChapterTitles,
-            lessonTitles: sharedLessonTitles,
-          });
-        }
-
-        const hiddenSnapshot = await getDocs(
-          collection(db, 'users', currentUser.uid, 'hiddenCourses')
+            return {
+              id: courseId,
+              title: data.courseTitle ?? 'Kurs',
+              description: data.courseDescription ?? '',
+              categoryIds: [],
+              coverImageUrl: data.coverImageUrl ?? undefined,
+              coverColor: data.coverColor ?? undefined,
+              chapters: sharedChapterCount,
+              lessons: sharedLessonCount,
+              ownerId,
+              ownerName: data.ownerName ?? data.ownerEmail ?? null,
+              ownerEmail: data.ownerEmail ?? null,
+              isShared: true,
+              startedAt: data.startedAt?.toDate?.() ?? null,
+              chapterTitles: sharedChapterTitles,
+              lessonTitles: sharedLessonTitles,
+            } as Course;
+          })
         );
+
+        const sharedCourses = sharedCourseResults.filter((c): c is Course => c !== null);
+
         const fetchedHidden = new Map<string, { mode: 'hidden' | 'removed' }>();
         hiddenSnapshot.docs.forEach((docSnapshot) => {
           const data = docSnapshot.data();
@@ -344,48 +345,51 @@ export default function Dashboard() {
 
         const combinedCourses = [...loadedCourses, ...sharedCourses];
 
-        // Lade Fortschritt für jeden Kurs
-        const progressData: Record<string, CourseProgress> = {};
-        for (const course of combinedCourses) {
-          const progressDoc = await getDoc(
-            doc(db, 'users', currentUser.uid, 'courseProgress', course.id)
-          );
-          
-          if (progressDoc.exists()) {
-            const data = progressDoc.data();
-            const completedLessons = Array.isArray(data.completedLessons) ? data.completedLessons : [];
-            const completedCount = completedLessons.length;
-            const totalLessonCandidates = [
-              normalizeCount(course.lessons),
-              normalizeCount(data.totalLessons),
-              normalizeCount(data.expectedLessonCount),
-              normalizeCount(data.lessonCount),
-              normalizeCount(data.progressLessonCount),
-            ];
-            const totalLessons = totalLessonCandidates.find((count) => count > 0) ?? 0;
-            const derivedPercentage =
-              totalLessons > 0
-                ? Math.max(0, Math.min(100, Math.round((completedCount / totalLessons) * 100)))
-                : null;
-            const storedPercentage = normalizePercentage(data.percentage);
-            const percentage = derivedPercentage ?? storedPercentage ?? 0;
+        // Phase 4: Load all progress in parallel
+        const progressEntries = await Promise.all(
+          combinedCourses.map(async (course) => {
+            const progressDoc = await getDoc(
+              doc(db, 'users', currentUser.uid, 'courseProgress', course.id)
+            );
+            
+            if (progressDoc.exists()) {
+              const data = progressDoc.data();
+              const completedLessons = Array.isArray(data.completedLessons) ? data.completedLessons : [];
+              const completedCount = completedLessons.length;
+              const totalLessonCandidates = [
+                normalizeCount(course.lessons),
+                normalizeCount(data.totalLessons),
+                normalizeCount(data.expectedLessonCount),
+                normalizeCount(data.lessonCount),
+                normalizeCount(data.progressLessonCount),
+              ];
+              const totalLessons = totalLessonCandidates.find((count) => count > 0) ?? 0;
+              const derivedPercentage =
+                totalLessons > 0
+                  ? Math.max(0, Math.min(100, Math.round((completedCount / totalLessons) * 100)))
+                  : null;
+              const storedPercentage = normalizePercentage(data.percentage);
+              const percentage = derivedPercentage ?? storedPercentage ?? 0;
 
-            progressData[course.id] = {
-              courseId: course.id,
-              completedLessons,
-              totalLessons,
-              percentage,
-              lastAccessedAt: data.lastAccessedAt?.toDate(),
-            };
-          } else {
-            progressData[course.id] = {
-              courseId: course.id,
-              completedLessons: [],
-              totalLessons: course.lessons,
-              percentage: 0,
-            };
-          }
-        }
+              return [course.id, {
+                courseId: course.id,
+                completedLessons,
+                totalLessons,
+                percentage,
+                lastAccessedAt: data.lastAccessedAt?.toDate(),
+              }] as [string, CourseProgress];
+            } else {
+              return [course.id, {
+                courseId: course.id,
+                completedLessons: [],
+                totalLessons: course.lessons,
+                percentage: 0,
+              }] as [string, CourseProgress];
+            }
+          })
+        );
+
+        const progressData: Record<string, CourseProgress> = Object.fromEntries(progressEntries);
         setCourseProgress(progressData);
 
         const startedTimestamps: Record<string, Date> = {};
