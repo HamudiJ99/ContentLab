@@ -19,6 +19,8 @@ import {
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import CheckIcon from '@mui/icons-material/Check';
 import NotificationsNoneIcon from '@mui/icons-material/NotificationsNone';
+import { auth, db } from '../firebase/firebaseConfig';
+import { doc, setDoc } from 'firebase/firestore';
 
 const PRESET_COLORS = [
   { name: 'Blau (Standard)', value: '#1D8BF1' },
@@ -76,10 +78,22 @@ export default function Settings() {
     localStorage.setItem('showUnsavedWarning', String(newValue));
   };
 
-  const handleColorChange = (color: string) => {
+  const handleColorChange = async (color: string) => {
     setBrandColor(color);
     setCustomColor(color);
     localStorage.setItem('brandColor', color);
+    
+    // Speichere auch in Firestore wenn User eingeloggt ist
+    const currentUser = auth.currentUser;
+    if (currentUser) {
+      try {
+        const prefRef = doc(db, 'users', currentUser.uid);
+        await setDoc(prefRef, { brandColor: color }, { merge: true });
+      } catch (error) {
+        console.error('Konnte Brand Color nicht in Firestore speichern:', error);
+      }
+    }
+    
     // Seite neu laden um Theme zu aktualisieren
     window.location.reload();
   };

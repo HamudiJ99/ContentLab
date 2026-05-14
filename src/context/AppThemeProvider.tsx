@@ -37,17 +37,26 @@ export default function AppThemeProvider({ children }: Props) {
     }
   }, []);
 
+  // Speichere Mode nur in localStorage wenn User eingeloggt ist
+  // Beim Logout wird localStorage geleert
   useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEY, mode);
-  }, [mode]);
+    if (user && hasLoadedRemoteMode) {
+      window.localStorage.setItem(STORAGE_KEY, mode);
+    }
+  }, [mode, user, hasLoadedRemoteMode]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       setUser(firebaseUser);
 
       if (!firebaseUser) {
+        // Bei Logout: State und localStorage zurücksetzen damit Login-Seite immer Standard-Design hat
+        // Farbe und Mode bleiben aber in Firestore und werden beim nächsten Login wieder geladen
         setHasLoadedRemoteMode(false);
-        setMode(getInitialMode());
+        setBrandColor('#1D8BF1');
+        localStorage.removeItem('brandColor');
+        localStorage.removeItem(STORAGE_KEY);
+        setMode('light'); // Login-Seite immer im Light Mode
         return;
       }
 
@@ -55,17 +64,32 @@ export default function AppThemeProvider({ children }: Props) {
         const prefRef = doc(db, 'users', firebaseUser.uid);
         const snapshot = await getDoc(prefRef);
         if (snapshot.exists()) {
-          const storedMode = snapshot.data().colorMode;
+          const data = snapshot.data();
+          const storedMode = data.colorMode;
+          const storedColor = data.brandColor;
+          
+          // Lade gespeicherten Modus
           if (storedMode === 'light' || storedMode === 'dark') {
             setMode(storedMode);
-            setHasLoadedRemoteMode(true);
-            return;
           }
+          
+          // Lade gespeicherte Brand Color
+          if (storedColor && typeof storedColor === 'string') {
+            setBrandColor(storedColor);
+            localStorage.setItem('brandColor', storedColor);
+          }
+          
+          setHasLoadedRemoteMode(true);
+          return;
         }
 
+        // Kein Firestore-Eintrag vorhanden - erstelle einen mit Defaults
         const fallbackMode = getInitialMode();
         setMode(fallbackMode);
-        await setDoc(prefRef, { colorMode: fallbackMode }, { merge: true });
+        await setDoc(prefRef, { 
+          colorMode: fallbackMode,
+          brandColor: '#1D8BF1'
+        }, { merge: true });
       } catch (error) {
         console.error('Konnte Theme-Präferenz nicht laden', error);
       } finally {

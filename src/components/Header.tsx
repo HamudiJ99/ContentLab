@@ -189,6 +189,10 @@ export default function Header() {
 
   const handleLogout = async () => {
     try {
+      // Lösche gespeicherte Login-Daten aus localStorage
+      localStorage.removeItem('rememberedEmail');
+      localStorage.removeItem('rememberedPassword');
+      
       await signOut(auth);
       navigate('/auth');
     } catch (error) {
