@@ -240,6 +240,33 @@ export default function Members() {
         };
       });
       setMembers(loadedMembers);
+
+      // Refresh photoURLs in the background for members that are missing one
+      const membersWithoutPhoto = loadedMembers.filter((m) => !m.photoURL && m.email);
+      if (membersWithoutPhoto.length > 0) {
+        const functions = getFunctions();
+        const checkExistsFn = httpsCallable<
+          { email: string },
+          { exists: boolean; photoURL: string | null; displayName: string | null }
+        >(functions, 'checkUserExists');
+        for (const member of membersWithoutPhoto) {
+          try {
+            const result = await checkExistsFn({ email: member.email.trim().toLowerCase() });
+            if (result.data.exists && result.data.photoURL) {
+              await updateDoc(doc(db, 'users', user.uid, 'members', member.id), {
+                photoURL: result.data.photoURL,
+              });
+              setMembers((prev) =>
+                prev.map((m) =>
+                  m.id === member.id ? { ...m, photoURL: result.data.photoURL ?? undefined } : m
+                )
+              );
+            }
+          } catch {
+            // Ignore individual failures — member might not be registered yet
+          }
+        }
+      }
     } catch (error) {
       console.error('Mitglieder konnten nicht geladen werden', error);
       setSnackbar({ open: true, message: 'Mitglieder konnten nicht geladen werden.', severity: 'error' });
@@ -1840,7 +1867,7 @@ export default function Members() {
                   {members.filter((m) => m.groupIds.includes(selectedGroup.id)).map((member) => (
                     <ListItem key={member.id} disableGutters sx={{ px: 2 }}>
                       <ListItemAvatar>
-                        <Avatar>{initials(member.name)}</Avatar>
+                        <Avatar src={member.photoURL}>{!member.photoURL && initials(member.name)}</Avatar>
                       </ListItemAvatar>
                       <ListItemText
                         primary={member.name}

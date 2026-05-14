@@ -25,6 +25,7 @@ import {
 } from '@mui/material';
 import { darken, lighten, getLuminance } from '@mui/system';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
+import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
@@ -133,6 +134,12 @@ const emptyLessonForm: LessonFormState = {
   status: 'published',
 };
 
+type NavLesson = {
+  id: string;
+  chapterId: string;
+  title: string;
+};
+
 const LessonEditor = () => {
   const navigate = useNavigate();
   const theme = useTheme();
@@ -170,6 +177,7 @@ const LessonEditor = () => {
   const [blockedNavigation, setBlockedNavigation] = useState<(() => void) | null>(null);
   const hasUnsavedChangesRef = useRef(false);
   const [warningEnabled, setWarningEnabled] = useState(true);
+  const [allNavLessons, setAllNavLessons] = useState<NavLesson[]>([]);
 
   // Sync ref with state
   useEffect(() => {
@@ -348,6 +356,51 @@ const LessonEditor = () => {
     );
     return unsubscribe;
   }, [lessonRef]);
+
+  // Lade alle Lektionen des Kurses für die Navigation
+  useEffect(() => {
+    if (!chaptersCollection || !courseRef) {
+      setAllNavLessons([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadAllLessons = async () => {
+      try {
+        const chaptersSnap = await getDocs(chaptersCollection);
+        const sortedChapters = chaptersSnap.docs
+          .map((d) => ({ id: d.id, position: d.data().position ?? 0 }))
+          .sort((a, b) => a.position - b.position);
+
+        const result: NavLesson[] = [];
+        for (const chapter of sortedChapters) {
+          const lessonsRef = collection(courseRef, 'chapters', chapter.id, 'lessons');
+          const lessonsSnap = await getDocs(lessonsRef);
+          const sortedLessons = lessonsSnap.docs
+            .map((d) => ({
+              id: d.id,
+              chapterId: chapter.id,
+              title: d.data().title ?? 'Lektion',
+              type: d.data().type as LessonType,
+              position: d.data().position ?? 0,
+              parentLessonId: d.data().parentLessonId ?? null,
+            }))
+            .filter((l) => l.type !== 'subchapter' && !l.parentLessonId)
+            .sort((a, b) => a.position - b.position);
+          result.push(...sortedLessons);
+        }
+        if (!cancelled) {
+          setAllNavLessons(result);
+        }
+      } catch {
+        if (!cancelled) setAllNavLessons([]);
+      }
+    };
+
+    loadAllLessons();
+    return () => { cancelled = true; };
+  }, [chaptersCollection, courseRef]);
 
   const handleLessonInputChange = (field: keyof LessonFormState) =>
     (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
@@ -869,6 +922,17 @@ const LessonEditor = () => {
     }
   };
 
+  const currentNavIndex = allNavLessons.findIndex((l) => l.id === lessonId);
+  const prevNavLesson = currentNavIndex > 0 ? allNavLessons[currentNavIndex - 1] : null;
+  const nextNavLesson =
+    currentNavIndex >= 0 && currentNavIndex < allNavLessons.length - 1
+      ? allNavLessons[currentNavIndex + 1]
+      : null;
+
+  const handleNavigateToLesson = (targetChapterId: string, targetLessonId: string) => {
+    handleNavigateTo(`/courses/${courseId}/chapters/${targetChapterId}/lessons/${targetLessonId}`);
+  };
+
   const handleNavigateTo = (path: string) => {
     if (hasUnsavedChanges && warningEnabled) {
       setBlockedNavigation(() => () => navigate(path));
@@ -1019,14 +1083,44 @@ const LessonEditor = () => {
             {chapter?.title ? `${chapter.title} · ${course?.title ?? ''}` : course?.title ?? ''}
           </Typography>
         </Box>
-        <Button
-          variant="outlined"
-          startIcon={<ArrowBackIcon />}
-          onClick={handleBackToCourse}
-          sx={{ textTransform: 'none' }}
-        >
-          Zurück zum Kurs
-        </Button>
+        <Stack spacing={1} alignItems={{ xs: 'flex-start', md: 'flex-end' }}>
+          <Button
+            variant="outlined"
+            startIcon={<ArrowBackIcon />}
+            onClick={handleBackToCourse}
+            sx={{ textTransform: 'none' }}
+          >
+            Zurück zum Kurs
+          </Button>
+          {allNavLessons.length > 1 && (
+            <Stack direction="row" spacing={0.5}>
+              <Tooltip title={prevNavLesson ? prevNavLesson.title : ''}>
+                <span>
+                  <IconButton
+                    size="small"
+                    disabled={!prevNavLesson}
+                    onClick={() => prevNavLesson && handleNavigateToLesson(prevNavLesson.chapterId, prevNavLesson.id)}
+                    sx={{ border: '1px solid', borderColor: 'divider' }}
+                  >
+                    <ArrowBackIcon fontSize="small" />
+                  </IconButton>
+                </span>
+              </Tooltip>
+              <Tooltip title={nextNavLesson ? nextNavLesson.title : ''}>
+                <span>
+                  <IconButton
+                    size="small"
+                    disabled={!nextNavLesson}
+                    onClick={() => nextNavLesson && handleNavigateToLesson(nextNavLesson.chapterId, nextNavLesson.id)}
+                    sx={{ border: '1px solid', borderColor: 'divider' }}
+                  >
+                    <ArrowForwardIcon fontSize="small" />
+                  </IconButton>
+                </span>
+              </Tooltip>
+            </Stack>
+          )}
+        </Stack>
       </Stack>
 
       {pageError ? (
