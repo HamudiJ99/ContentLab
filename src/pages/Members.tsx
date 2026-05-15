@@ -66,6 +66,7 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import SaveIcon from '@mui/icons-material/Save';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import { auth, db } from '../firebase/firebaseConfig';
 
 type MemberStatus = 'active' | 'inactive';
@@ -165,6 +166,12 @@ export default function Members() {
   const [selectedRole, setSelectedRole] = useState<MemberRole>('member');
   const [selectedMemberName, setSelectedMemberName] = useState('');
   const [drawerSaving, setDrawerSaving] = useState(false);
+  const [initialMemberCourseIds, setInitialMemberCourseIds] = useState<string[]>([]);
+  const [initialMemberGroupIds, setInitialMemberGroupIds] = useState<string[]>([]);
+  const [initialMemberRole, setInitialMemberRole] = useState<MemberRole>('member');
+  const [initialMemberName, setInitialMemberName] = useState('');
+  const [initialMemberStatus, setInitialMemberStatus] = useState<MemberStatus>('active');
+  const [memberUnsavedConfirmOpen, setMemberUnsavedConfirmOpen] = useState(false);
   const [addMemberOpen, setAddMemberOpen] = useState(false);
   const [addMemberLoading, setAddMemberLoading] = useState(false);
   const [newMember, setNewMember] = useState({ name: '', email: '', role: 'member' as MemberRole });
@@ -179,11 +186,26 @@ export default function Members() {
   const [selectedGroupForMenu, setSelectedGroupForMenu] = useState<MemberGroup | null>(null);
   const [groupToDelete, setGroupToDelete] = useState<MemberGroup | null>(null);
   const [deleteGroupLoading, setDeleteGroupLoading] = useState(false);
+  const [editGroupOpen, setEditGroupOpen] = useState(false);
+  const [groupToEdit, setGroupToEdit] = useState<MemberGroup | null>(null);
+  const [editGroupForm, setEditGroupForm] = useState({ name: '', description: '' });
+  const [editGroupLoading, setEditGroupLoading] = useState(false);
   const [groupSortOption, setGroupSortOption] = useState<MemberSortOption>('date-desc');
   const [groupFilterAnchorEl, setGroupFilterAnchorEl] = useState<null | HTMLElement>(null);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedGroupsForDeletion, setSelectedGroupsForDeletion] = useState<Set<string>>(new Set());
   const [deleteMultipleGroupsLoading, setDeleteMultipleGroupsLoading] = useState(false);
+  const [memberSelectionMode, setMemberSelectionMode] = useState(false);
+  const [selectedMembersForDeletion, setSelectedMembersForDeletion] = useState<Set<string>>(new Set());
+  const [deleteMultipleMembersLoading, setDeleteMultipleMembersLoading] = useState(false);
+  const [confirmDeleteMultipleMembersOpen, setConfirmDeleteMultipleMembersOpen] = useState(false);
+  const [warningEnabled, setWarningEnabled] = useState(true);
+  const [groupUnsavedConfirmOpen, setGroupUnsavedConfirmOpen] = useState(false);
+
+  useEffect(() => {
+    const saved = localStorage.getItem('showUnsavedWarning');
+    if (saved !== null) setWarningEnabled(saved === 'true');
+  }, []);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => setCurrentUser(user));
@@ -416,6 +438,51 @@ export default function Members() {
     setSelectedGroupsForDeletion(new Set());
   };
 
+  const toggleMemberSelectionMode = () => {
+    setMemberSelectionMode((prev) => !prev);
+    setSelectedMembersForDeletion(new Set());
+  };
+
+  const toggleMemberSelection = (memberId: string) => {
+    setSelectedMembersForDeletion((prev) => {
+      const next = new Set(prev);
+      if (next.has(memberId)) {
+        next.delete(memberId);
+      } else {
+        next.add(memberId);
+      }
+      return next;
+    });
+  };
+
+  const handleDeleteSelectedMembers = async () => {
+    if (!currentUser || selectedMembersForDeletion.size === 0) return;
+    setDeleteMultipleMembersLoading(true);
+    try {
+      for (const memberId of Array.from(selectedMembersForDeletion)) {
+        const member = members.find((m) => m.id === memberId);
+        if (member?.email) {
+          await revokeAllInvitationsForMember(member);
+        }
+        await deleteDoc(doc(db, 'users', currentUser.uid, 'members', memberId));
+      }
+      setMembers((prev) => prev.filter((m) => !selectedMembersForDeletion.has(m.id)));
+      if (selectedMember && selectedMembersForDeletion.has(selectedMember.id)) {
+        forceCloseDrawer();
+      }
+      const count = selectedMembersForDeletion.size;
+      setSelectedMembersForDeletion(new Set());
+      setMemberSelectionMode(false);
+      setConfirmDeleteMultipleMembersOpen(false);
+      setSnackbar({ open: true, message: `${count} Mitglied${count !== 1 ? 'er' : ''} wurden gelöscht.`, severity: 'success' });
+    } catch (error) {
+      console.error('Mitglieder konnten nicht gelöscht werden', error);
+      setSnackbar({ open: true, message: 'Mitglieder konnten nicht gelöscht werden.', severity: 'error' });
+    } finally {
+      setDeleteMultipleMembersLoading(false);
+    }
+  };
+
   const toggleGroupSelection = (groupId: string) => {
     const newSelection = new Set(selectedGroupsForDeletion);
     if (newSelection.has(groupId)) {
@@ -473,14 +540,46 @@ export default function Members() {
     setSelectedGroupIds(member.groupIds);
     setSelectedRole(member.role);
     setSelectedMemberName(member.name);
+    setInitialMemberCourseIds(member.assignedCourseIds);
+    setInitialMemberGroupIds(member.groupIds);
+    setInitialMemberRole(member.role);
+    setInitialMemberName(member.name);
+    setInitialMemberStatus(member.status);
   };
 
-  const handleDrawerClose = () => {
+  const hasMemberUnsavedChanges = () => {
+    if (!selectedMember) return false;
+    if (selectedMemberName !== initialMemberName) return true;
+    if (selectedRole !== initialMemberRole) return true;
+    if (selectedMember.status !== initialMemberStatus) return true;
+    const sortedCurrent = [...selectedCourseIds].sort();
+    const sortedInitial = [...initialMemberCourseIds].sort();
+    if (sortedCurrent.length !== sortedInitial.length || sortedCurrent.some((id, i) => id !== sortedInitial[i])) return true;
+    const sortedGroups = [...selectedGroupIds].sort();
+    const sortedInitialGroups = [...initialMemberGroupIds].sort();
+    if (sortedGroups.length !== sortedInitialGroups.length || sortedGroups.some((id, i) => id !== sortedInitialGroups[i])) return true;
+    return false;
+  };
+
+  const forceCloseDrawer = () => {
     setSelectedMember(null);
     setSelectedCourseIds([]);
     setSelectedGroupIds([]);
     setSelectedRole('member');
     setSelectedMemberName('');
+    setInitialMemberCourseIds([]);
+    setInitialMemberGroupIds([]);
+    setInitialMemberRole('member');
+    setInitialMemberName('');
+    setInitialMemberStatus('active');
+  };
+
+  const handleDrawerClose = () => {
+    if (warningEnabled && hasMemberUnsavedChanges()) {
+      setMemberUnsavedConfirmOpen(true);
+      return;
+    }
+    forceCloseDrawer();
   };
 
   const handleSelectGroup = (group: MemberGroup) => {
@@ -489,10 +588,25 @@ export default function Members() {
     setInitialGroupCourseIds(group.assignedCourseIds);
   };
 
-  const handleGroupDrawerClose = () => {
+  const hasGroupUnsavedChanges = () => {
+    if (!selectedGroup) return false;
+    const sorted1 = [...selectedGroupCourseIds].sort();
+    const sorted2 = [...initialGroupCourseIds].sort();
+    return sorted1.length !== sorted2.length || sorted1.some((id, i) => id !== sorted2[i]);
+  };
+
+  const forceCloseGroupDrawer = () => {
     setSelectedGroup(null);
     setSelectedGroupCourseIds([]);
     setInitialGroupCourseIds([]);
+  };
+
+  const handleGroupDrawerClose = () => {
+    if (warningEnabled && hasGroupUnsavedChanges()) {
+      setGroupUnsavedConfirmOpen(true);
+      return;
+    }
+    forceCloseGroupDrawer();
   };
 
   const toggleCourseSelection = (courseId: string) => {
@@ -619,6 +733,12 @@ export default function Members() {
       );
 
       setSnackbar({ open: true, message: 'Mitglied wurde aktualisiert.', severity: 'success' });
+      // Reset initial state so unsaved-changes detection is cleared
+      setInitialMemberName(selectedMemberName);
+      setInitialMemberCourseIds(selectedCourseIds);
+      setInitialMemberGroupIds(selectedGroupIds);
+      setInitialMemberRole(selectedRole);
+      setInitialMemberStatus(selectedMember.status);
     } catch (error) {
       console.error('Zuordnungen konnten nicht gespeichert werden', error);
       setSnackbar({ open: true, message: 'Zuordnungen konnten nicht gespeichert werden.', severity: 'error' });
@@ -754,6 +874,7 @@ export default function Members() {
         setSelectedMember((prev) =>
           prev ? { ...prev, courseInvitations: updatedInvitations } : prev
         );
+        setInitialMemberCourseIds([...selectedCourseIds]);
         
         return;
       }
@@ -821,6 +942,7 @@ export default function Members() {
       setSelectedMember((prev) =>
         prev ? { ...prev, courseInvitations: updatedInvitations } : prev
       );
+      setInitialMemberCourseIds([...selectedCourseIds]);
 
       setSnackbar({ open: true, message: 'Einladung wurde versendet.', severity: 'success' });
     } catch (error) {
@@ -847,6 +969,12 @@ export default function Members() {
     // Prüfe, ob die E-Mail-Adresse die eigene ist
     if (currentUser.email && newMember.email.toLowerCase() === currentUser.email.toLowerCase()) {
       setSnackbar({ open: true, message: 'Sie können sich nicht selbst als Mitglied hinzufügen.', severity: 'error' });
+      return;
+    }
+    // Prüfe ob E-Mail bereits in der Mitgliederliste vorhanden ist
+    const emailAlreadyExists = members.some((m) => m.email?.toLowerCase() === newMember.email.trim().toLowerCase());
+    if (emailAlreadyExists) {
+      setSnackbar({ open: true, message: 'Diese E-Mail-Adresse ist bereits als Mitglied eingetragen.', severity: 'error' });
       return;
     }
     setAddMemberLoading(true);
@@ -910,6 +1038,14 @@ export default function Members() {
       setSnackbar({ open: true, message: 'Gruppenname ist erforderlich.', severity: 'error' });
       return;
     }
+    const trimmedName = newGroup.name.trim();
+    const duplicate = groups.find(
+      (g) => g.name.trim().toLowerCase() === trimmedName.toLowerCase()
+    );
+    if (duplicate) {
+      setSnackbar({ open: true, message: `Eine Gruppe mit dem Namen "${trimmedName}" existiert bereits.`, severity: 'error' });
+      return;
+    }
     setAddGroupLoading(true);
     try {
       const payload = {
@@ -950,7 +1086,7 @@ export default function Members() {
       setMembers((prev) => prev.filter((member) => member.id !== memberToDelete.id));
 
       if (selectedMember?.id === memberToDelete.id) {
-        handleDrawerClose();
+        forceCloseDrawer();
       }
 
       setSnackbar({ open: true, message: 'Mitglied wurde gelöscht.', severity: 'success' });
@@ -1139,7 +1275,7 @@ export default function Members() {
       );
 
       if (selectedGroup?.id === groupToDelete.id) {
-        handleGroupDrawerClose();
+        forceCloseGroupDrawer();
       }
 
       setSnackbar({ open: true, message: 'Gruppe wurde gelöscht.', severity: 'success' });
@@ -1171,6 +1307,57 @@ export default function Members() {
     } catch (error) {
       console.error('Gruppe konnte nicht dupliziert werden', error);
       setSnackbar({ open: true, message: 'Gruppe konnte nicht dupliziert werden.', severity: 'error' });
+    }
+  };
+
+  const handleOpenEditGroup = (group: MemberGroup) => {
+    setGroupToEdit(group);
+    setEditGroupForm({ name: group.name, description: group.description ?? '' });
+    setEditGroupOpen(true);
+    handleGroupMenuClose();
+  };
+
+  const handleSaveEditGroup = async () => {
+    if (!currentUser || !groupToEdit) return;
+    const trimmedName = editGroupForm.name.trim();
+    if (!trimmedName) {
+      setSnackbar({ open: true, message: 'Gruppenname ist erforderlich.', severity: 'error' });
+      return;
+    }
+    const duplicate = groups.find(
+      (g) => g.name.trim().toLowerCase() === trimmedName.toLowerCase() && g.id !== groupToEdit.id
+    );
+    if (duplicate) {
+      setSnackbar({ open: true, message: `Eine Gruppe mit dem Namen "${trimmedName}" existiert bereits.`, severity: 'error' });
+      return;
+    }
+    setEditGroupLoading(true);
+    try {
+      await updateDoc(doc(db, 'users', currentUser.uid, 'memberGroups', groupToEdit.id), {
+        name: trimmedName,
+        description: editGroupForm.description.trim(),
+        updatedAt: serverTimestamp(),
+      });
+      setGroups((prev) =>
+        prev.map((g) =>
+          g.id === groupToEdit.id
+            ? { ...g, name: trimmedName, description: editGroupForm.description.trim() }
+            : g
+        )
+      );
+      if (selectedGroup?.id === groupToEdit.id) {
+        setSelectedGroup((prev) =>
+          prev ? { ...prev, name: trimmedName, description: editGroupForm.description.trim() } : prev
+        );
+      }
+      setEditGroupOpen(false);
+      setGroupToEdit(null);
+      setSnackbar({ open: true, message: 'Gruppe wurde aktualisiert.', severity: 'success' });
+    } catch (error) {
+      console.error('Gruppe konnte nicht gespeichert werden', error);
+      setSnackbar({ open: true, message: 'Gruppe konnte nicht gespeichert werden.', severity: 'error' });
+    } finally {
+      setEditGroupLoading(false);
     }
   };
 
@@ -1209,7 +1396,7 @@ export default function Members() {
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="Mitglied suchen"
-              fullWidth
+              sx={{ width: { xs: '100%', md: 380 }, flexShrink: 1 }}
               startAdornment={
                 <InputAdornment position="start">
                   <SearchIcon />
@@ -1227,14 +1414,36 @@ export default function Members() {
                   <FilterListIcon />
                 </IconButton>
               </Tooltip>
-              <Tooltip title="Export CSV">
-                <IconButton color="inherit" onClick={() => setConfirmExportOpen(true)}>
-                  <DownloadIcon />
-                </IconButton>
-              </Tooltip>
-              <Button variant="contained" startIcon={<PersonAddAlt1Icon />} onClick={() => setAddMemberOpen(true)}>
-                Hinzufügen
-              </Button>
+              {memberSelectionMode ? (
+                <>
+                  <Button variant="outlined" onClick={toggleMemberSelectionMode}>
+                    Abbrechen
+                  </Button>
+                  <Button
+                    variant="contained"
+                    color="error"
+                    startIcon={<DeleteOutlineIcon />}
+                    onClick={() => setConfirmDeleteMultipleMembersOpen(true)}
+                    disabled={selectedMembersForDeletion.size === 0}
+                  >
+                    Löschen ({selectedMembersForDeletion.size})
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Tooltip title="Export CSV">
+                    <IconButton color="inherit" onClick={() => setConfirmExportOpen(true)}>
+                      <DownloadIcon />
+                    </IconButton>
+                  </Tooltip>
+                  <Button variant="outlined" onClick={toggleMemberSelectionMode}>
+                    Auswählen
+                  </Button>
+                  <Button variant="contained" startIcon={<PersonAddAlt1Icon />} onClick={() => setAddMemberOpen(true)}>
+                    Hinzufügen
+                  </Button>
+                </>
+              )}
             </Stack>
           </Stack>
           <Menu
@@ -1288,6 +1497,21 @@ export default function Members() {
             <Table size="small">
               <TableHead>
                 <TableRow>
+                  {memberSelectionMode && (
+                    <TableCell padding="checkbox">
+                      <Checkbox
+                        indeterminate={selectedMembersForDeletion.size > 0 && selectedMembersForDeletion.size < filteredMembers.length}
+                        checked={filteredMembers.length > 0 && selectedMembersForDeletion.size === filteredMembers.length}
+                        onChange={() => {
+                          if (selectedMembersForDeletion.size === filteredMembers.length) {
+                            setSelectedMembersForDeletion(new Set());
+                          } else {
+                            setSelectedMembersForDeletion(new Set(filteredMembers.map((m) => m.id)));
+                          }
+                        }}
+                      />
+                    </TableCell>
+                  )}
                   <TableCell>Name</TableCell>
                   <TableCell>Status</TableCell>
                   <TableCell>Gruppen</TableCell>
@@ -1296,8 +1520,25 @@ export default function Members() {
                 </TableRow>
               </TableHead>
               <TableBody>
-                {filteredMembers.map((member) => (
-                  <TableRow key={member.id} hover sx={{ cursor: 'pointer' }} onClick={() => handleSelectMember(member)}>
+                {filteredMembers.map((member) => {
+                  const isSelected = selectedMembersForDeletion.has(member.id);
+                  return (
+                    <TableRow
+                      key={member.id}
+                      hover
+                      selected={isSelected}
+                      sx={{ cursor: 'pointer' }}
+                      onClick={() => memberSelectionMode ? toggleMemberSelection(member.id) : handleSelectMember(member)}
+                    >
+                      {memberSelectionMode && (
+                        <TableCell padding="checkbox">
+                          <Checkbox
+                            checked={isSelected}
+                            onChange={() => toggleMemberSelection(member.id)}
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        </TableCell>
+                      )}
                     <TableCell>
                       <Stack direction="row" spacing={2} alignItems="center">
                         <Avatar src={member.photoURL}>{!member.photoURL && initials(member.name)}</Avatar>
@@ -1348,7 +1589,8 @@ export default function Members() {
                       <Typography variant="body2">{formatDateTime(member.createdAt)}</Typography>
                     </TableCell>
                   </TableRow>
-                ))}
+                  );
+                })}
               </TableBody>
             </Table>
           )}
@@ -1766,7 +2008,7 @@ export default function Members() {
                             onClick={() => isAssigned ? handleSendCourseInvitation(course.id) : toggleCourseSelection(course.id)}
                           >
                             {isAssigned 
-                              ? (invitationStatus === 'invited' ? 'Erneut einladen' : 'Einladen')
+                              ? (invitationStatus === 'invited' ? 'Erneut einladen' : 'Bestätigen')
                               : 'Einladen'
                             }
                           </Button>
@@ -1975,6 +2217,12 @@ export default function Members() {
         anchorOrigin={{ horizontal: 'right', vertical: 'bottom' }}
         transformOrigin={{ horizontal: 'right', vertical: 'top' }}
       >
+        <MenuItem onClick={() => selectedGroupForMenu && handleOpenEditGroup(selectedGroupForMenu)}>
+          <ListItemIcon>
+            <EditOutlinedIcon fontSize="small" />
+          </ListItemIcon>
+          <ListItemText>Bearbeiten</ListItemText>
+        </MenuItem>
         <MenuItem onClick={() => selectedGroupForMenu && handleDuplicateGroup(selectedGroupForMenu)}>
           <ListItemIcon>
             <ContentCopyIcon fontSize="small" />
@@ -2005,6 +2253,99 @@ export default function Members() {
             disabled={deleteGroupLoading}
           >
             {deleteGroupLoading ? 'Löscht...' : 'Löschen'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={editGroupOpen} onClose={() => setEditGroupOpen(false)} fullWidth maxWidth="sm">
+        <DialogTitle>Gruppe bearbeiten</DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={2} mt={1}>
+            <TextField
+              label="Name der Gruppe"
+              value={editGroupForm.name}
+              onChange={(event) => setEditGroupForm((prev) => ({ ...prev, name: event.target.value }))}
+              required
+              fullWidth
+              autoFocus
+            />
+            <TextField
+              label="Beschreibung"
+              value={editGroupForm.description}
+              onChange={(event) => setEditGroupForm((prev) => ({ ...prev, description: event.target.value }))}
+              placeholder="Optional"
+              multiline
+              minRows={3}
+              fullWidth
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setEditGroupOpen(false)}>Abbrechen</Button>
+          <Button onClick={handleSaveEditGroup} variant="contained" disabled={editGroupLoading}>
+            {editGroupLoading ? 'Speichert...' : 'Speichern'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={groupUnsavedConfirmOpen} onClose={() => setGroupUnsavedConfirmOpen(false)}>
+        <DialogTitle>Ungespeicherte Änderungen</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            Du hast ungespeicherte Änderungen in der Gruppenzuordnung. Möchtest du wirklich schließen und die Änderungen verwerfen?
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setGroupUnsavedConfirmOpen(false)}>Zurück</Button>
+          <Button
+            color="error"
+            onClick={() => {
+              setGroupUnsavedConfirmOpen(false);
+              forceCloseGroupDrawer();
+            }}
+          >
+            Verwerfen & Schließen
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={memberUnsavedConfirmOpen} onClose={() => setMemberUnsavedConfirmOpen(false)}>
+        <DialogTitle>Ungespeicherte Änderungen</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            Du hast ungespeicherte Änderungen an diesem Mitglied. Möchtest du wirklich schließen und die Änderungen verwerfen?
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setMemberUnsavedConfirmOpen(false)}>Zurück</Button>
+          <Button
+            color="error"
+            onClick={() => {
+              setMemberUnsavedConfirmOpen(false);
+              forceCloseDrawer();
+            }}
+          >
+            Verwerfen & Schließen
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={confirmDeleteMultipleMembersOpen} onClose={() => setConfirmDeleteMultipleMembersOpen(false)}>
+        <DialogTitle>Mitglieder löschen</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            Möchtest du wirklich {selectedMembersForDeletion.size} Mitglied{selectedMembersForDeletion.size !== 1 ? 'er' : ''} löschen? Diese Aktion kann nicht rückgängig gemacht werden.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConfirmDeleteMultipleMembersOpen(false)}>Abbrechen</Button>
+          <Button
+            color="error"
+            variant="contained"
+            onClick={handleDeleteSelectedMembers}
+            disabled={deleteMultipleMembersLoading}
+          >
+            {deleteMultipleMembersLoading ? <CircularProgress size={20} color="inherit" /> : `${selectedMembersForDeletion.size} löschen`}
           </Button>
         </DialogActions>
       </Dialog>
