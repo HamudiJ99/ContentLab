@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { Underline } from '@tiptap/extension-underline';
@@ -27,6 +27,8 @@ type RichTextEditorProps = {
 };
 
 export default function RichTextEditor({ content, onChange, minHeight = 300 }: RichTextEditorProps) {
+  const isProgrammaticUpdate = useRef(false);
+
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
@@ -45,6 +47,10 @@ export default function RichTextEditor({ content, onChange, minHeight = 300 }: R
     ],
     content,
     onUpdate: ({ editor }) => {
+      if (isProgrammaticUpdate.current) {
+        // fired synchronously during setContent — ignore it
+        return;
+      }
       onChange(editor.getHTML());
     },
     editorProps: {
@@ -57,7 +63,11 @@ export default function RichTextEditor({ content, onChange, minHeight = 300 }: R
 
   useEffect(() => {
     if (editor && content !== editor.getHTML()) {
-      editor.commands.setContent(content);
+      isProgrammaticUpdate.current = true;
+      editor.commands.setContent(content, false);
+      // reset after: if onUpdate fired synchronously above it already ran with the flag set;
+      // if it didn't fire at all, we still need to clear so user edits aren't blocked.
+      isProgrammaticUpdate.current = false;
     }
   }, [content, editor]);
 

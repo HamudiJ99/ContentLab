@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   Typography,
@@ -20,7 +20,9 @@ import {
   alpha,
   Paper,
   Divider,
+  Drawer,
   IconButton,
+  TextField,
   Tooltip,
   Dialog,
   DialogContent,
@@ -47,6 +49,9 @@ import ImageIcon from '@mui/icons-material/Image';
 import DownloadIcon from '@mui/icons-material/Download';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
+import NoteAltOutlinedIcon from '@mui/icons-material/NoteAltOutlined';
+import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import FullscreenIcon from '@mui/icons-material/Fullscreen';
 import CloseIcon from '@mui/icons-material/Close';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
@@ -57,7 +62,7 @@ import ViewStreamIcon from '@mui/icons-material/ViewStream';
 import ViewSidebarIcon from '@mui/icons-material/ViewSidebar';
 import VideoLibraryIcon from '@mui/icons-material/VideoLibrary';
 import { onAuthStateChanged, type User } from 'firebase/auth';
-import { collection, getDocs, doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, getDocs, doc, getDoc, setDoc, serverTimestamp, updateDoc, deleteDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase/firebaseConfig';
 
 type Course = {
@@ -104,6 +109,13 @@ type FlatLesson = Lesson & {
   chapterTitle: string;
 };
 
+type Note = {
+  id: string;
+  text: string;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
 export default function Learn() {
   const { courseId } = useParams<{ courseId: string }>();
   const navigate = useNavigate();
@@ -118,10 +130,19 @@ export default function Learn() {
   const [expandedChapters, setExpandedChapters] = useState<Set<string>>(new Set());
   const [expandedSubchapters, setExpandedSubchapters] = useState<Set<string>>(new Set());
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [headerCollapsed, setHeaderCollapsed] = useState(false);
+  const [descExpanded, setDescExpanded] = useState(false);
   const [pdfFullscreen, setPdfFullscreen] = useState(false);
   const [showAdditionalInfo, setShowAdditionalInfo] = useState(true);
   const [showMedia, setShowMedia] = useState(true);
   const [layoutMode, setLayoutMode] = useState<'stacked' | 'sideBySide'>('stacked');
+  const [notesOpen, setNotesOpen] = useState(false);
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [notesLoading, setNotesLoading] = useState(false);
+  const [newNoteText, setNewNoteText] = useState('');
+  const [savingNote, setSavingNote] = useState(false);
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
+  const [editingNoteText, setEditingNoteText] = useState('');
   const theme = useTheme();
 
   useEffect(() => {
@@ -289,6 +310,102 @@ export default function Learn() {
 
     loadCourseData();
   }, [currentUser, courseId]);
+
+  // Notes Firestore collection — stored under current user, keyed by lesson
+  const notesCollection = useMemo(() => {
+    if (!currentUser || !courseId || !currentLessonId) return null;
+    // Find chapterId from lessonsByChapter (available as state)
+    let chapterId: string | null = null;
+    for (const [cId, lessons] of Object.entries(lessonsByChapter)) {
+      if (lessons.some((l) => l.id === currentLessonId)) {
+        chapterId = cId;
+        break;
+      }
+    }
+    if (!chapterId) return null;
+    return collection(
+      db,
+      'users', currentUser.uid,
+      'courses', courseId,
+      'chapters', chapterId,
+      'lessons', currentLessonId,
+      'notes'
+    );
+  }, [currentUser, courseId, currentLessonId, lessonsByChapter]);
+
+  // Reset notes when lesson changes
+  const prevLessonIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (prevLessonIdRef.current !== currentLessonId) {
+      prevLessonIdRef.current = currentLessonId;
+      setNotes([]);
+      setNewNoteText('');
+      setEditingNoteId(null);
+      setEditingNoteText('');
+    }
+  }, [currentLessonId]);
+
+  // Load notes when panel opens
+  useEffect(() => {
+    if (!notesOpen || !notesCollection) return;
+    let cancelled = false;
+    const loadNotes = async () => {
+      setNotesLoading(true);
+      try {
+        const snap = await getDocs(notesCollection);
+        if (!cancelled) {
+          const loaded: Note[] = snap.docs.map((d) => ({
+            id: d.id,
+            text: d.data().text ?? '',
+            createdAt: d.data().createdAt?.toDate?.() ?? new Date(),
+            updatedAt: d.data().updatedAt?.toDate?.() ?? new Date(),
+          })).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+          setNotes(loaded);
+        }
+      } finally {
+        if (!cancelled) setNotesLoading(false);
+      }
+    };
+    loadNotes();
+    return () => { cancelled = true; };
+  }, [notesOpen, notesCollection]);
+
+  const handleAddNote = async () => {
+    if (!notesCollection || !newNoteText.trim()) return;
+    setSavingNote(true);
+    try {
+      const id = crypto.randomUUID();
+      const now = new Date();
+      await setDoc(doc(notesCollection, id), { text: newNoteText.trim(), createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+      setNotes((prev) => [{ id, text: newNoteText.trim(), createdAt: now, updatedAt: now }, ...prev]);
+      setNewNoteText('');
+    } finally {
+      setSavingNote(false);
+    }
+  };
+
+  const handleSaveEditNote = async (id: string) => {
+    if (!notesCollection || !editingNoteText.trim()) return;
+    setSavingNote(true);
+    try {
+      await updateDoc(doc(notesCollection, id), { text: editingNoteText.trim(), updatedAt: serverTimestamp() });
+      setNotes((prev) => prev.map((n) => n.id === id ? { ...n, text: editingNoteText.trim(), updatedAt: new Date() } : n));
+      setEditingNoteId(null);
+      setEditingNoteText('');
+    } finally {
+      setSavingNote(false);
+    }
+  };
+
+  const handleDeleteNote = async (id: string) => {
+    if (!notesCollection) return;
+    await deleteDoc(doc(notesCollection, id));
+    setNotes((prev) => prev.filter((n) => n.id !== id));
+  };
+
+  const formatNoteDate = (d: Date) =>
+    d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' }) +
+    ' ' + d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
 
   const allLessons: FlatLesson[] = chapters.flatMap((chapter) => {
     const chapterLessons = lessonsByChapter[chapter.id] || [];
@@ -507,45 +624,135 @@ export default function Learn() {
 
   return (
     <Box sx={{ minHeight: '100vh', bgcolor: 'background.default' }}>
-      {/* Kompakter Header */}
-      <Box sx={{ 
-        px: { xs: 2, md: 3 }, 
-        py: 2, 
-        borderBottom: '1px solid', 
+      {/* Kurs-Header mit Cover */}
+      <Box
+        sx={{
+          position: 'relative',
+          bgcolor: course.coverColor ?? 'primary.main',
+          backgroundImage: course.coverImageUrl ? `url(${course.coverImageUrl})` : undefined,
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+          minHeight: headerCollapsed ? 0 : { xs: 130, md: 160 },
+          maxHeight: headerCollapsed ? 0 : 500,
+          overflow: 'hidden',
+          transition: 'min-height 0.3s ease, max-height 0.3s ease',
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'flex-start',
+        }}
+      >
+        {/* Gradient-Overlay for readability */}
+        <Box
+          sx={{
+            position: 'absolute',
+            inset: 0,
+            background: 'linear-gradient(to bottom, rgba(0,0,0,0.15) 0%, rgba(0,0,0,0.6) 100%)',
+          }}
+        />
+        <IconButton
+            onClick={() => navigate('/dashboard')}
+            size="small"
+            sx={{ color: 'white', position: 'absolute', top: 12, left: { xs: 8, md: 16 }, zIndex: 1, '&:hover': { bgcolor: 'rgba(255,255,255,0.15)' } }}
+          >
+            <ArrowBackIcon />
+          </IconButton>
+        <Box sx={{ position: 'relative', px: { xs: 2, md: 3 }, pb: 2, pt: '52px', pr: { xs: '100px', md: '120px' } }}>
+            {/* Left: title + description */}
+              <Typography variant="h5" fontWeight={700} color="white" sx={{ maxWidth: { xs: '100%', md: 700 } }}>
+                {course.title}
+              </Typography>
+              {course.description && (() => {
+                const LIMIT = 200;
+                const isLong = course.description.length > LIMIT;
+                const displayed = descExpanded || !isLong
+                  ? course.description
+                  : course.description.slice(0, LIMIT) + '…';
+                return (
+                  <Box>
+                    <Typography
+                      variant="body2"
+                      color="rgba(255,255,255,0.85)"
+                      sx={{ mt: 0.5, maxWidth: { xs: '100%', md: 700 }, whiteSpace: 'pre-wrap' }}
+                    >
+                      {displayed}
+                    </Typography>
+                    {isLong && (
+                      <Typography
+                        variant="caption"
+                        onClick={() => setDescExpanded((v) => !v)}
+                        sx={{
+                          color: 'rgba(255,255,255,0.7)',
+                          cursor: 'pointer',
+                          textDecoration: 'underline',
+                          mt: 0.25,
+                          display: 'inline-block',
+                          '&:hover': { color: 'white' },
+                        }}
+                      >
+                        {descExpanded ? 'Weniger anzeigen' : 'Mehr anzeigen'}
+                      </Typography>
+                    )}
+                  </Box>
+                );
+              })()}
+        </Box>
+
+        {/* Progress: absolute bottom-right */}
+        <Box sx={{ position: 'absolute', bottom: 'auto', top: { xs: 36, md: 40 }, right: { xs: 12, md: 20 }, zIndex: 1, textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+          <Box sx={{ position: 'relative', display: 'inline-flex' }}>
+            <CircularProgress
+              variant="determinate"
+              value={100}
+              size={72}
+              thickness={4}
+              sx={{ color: 'rgba(255,255,255,0.25)', position: 'absolute' }}
+            />
+            <CircularProgress
+              variant="determinate"
+              value={progress}
+              size={72}
+              thickness={4}
+              sx={{ color: 'white' }}
+            />
+            <Box sx={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Typography variant="body2" fontWeight={700} color="white">{progress}%</Typography>
+            </Box>
+          </Box>
+          <Typography variant="caption" color="rgba(255,255,255,0.85)" sx={{ mt: 0.75, whiteSpace: 'nowrap' }}>
+            {completedCount}/{totalLessons} Lektionen
+          </Typography>
+        </Box>
+      </Box>
+
+      {/* Schmale Leiste für Sidebar-Toggle */}
+      <Box sx={{
+        px: { xs: 2, md: 3 },
+        py: 0.75,
+        borderBottom: '1px solid',
         borderColor: 'divider',
         bgcolor: 'background.paper',
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
         position: 'sticky',
         top: 0,
         zIndex: 100,
       }}>
-        <Stack direction="row" justifyContent="space-between" alignItems="center">
-          <Stack direction="row" alignItems="center" spacing={2}>
-            <IconButton onClick={() => navigate('/dashboard')} size="small">
-              <ArrowBackIcon />
-            </IconButton>
-            <Box>
-              <Typography variant="h6" fontWeight={700} noWrap sx={{ maxWidth: { xs: 200, md: 400 } }}>
-                {course.title}
-              </Typography>
-              <Stack direction="row" spacing={2} alignItems="center">
-                <LinearProgress
-                  variant="determinate"
-                  value={progress}
-                  sx={{ 
-                    width: 120, 
-                    height: 6, 
-                    borderRadius: 3,
-                    bgcolor: alpha(theme.palette.primary.main, 0.1),
-                  }}
-                />
-                <Typography variant="caption" color="text.secondary">
-                  {progress}% • {completedCount}/{totalLessons} Lektionen
-                </Typography>
-              </Stack>
-            </Box>
-          </Stack>
+        <Tooltip title={headerCollapsed ? 'Kurscover einblenden' : 'Kurscover ausblenden'}>
+          <IconButton size="small" onClick={() => setHeaderCollapsed((v) => !v)}>
+            {headerCollapsed ? <ExpandMoreIcon /> : <ExpandLessIcon />}
+          </IconButton>
+        </Tooltip>
+        <Stack direction="row" spacing={0.5} alignItems="center">
+          <Tooltip title="Meine Notizen">
+            <span>
+              <IconButton size="small" onClick={() => setNotesOpen(true)} disabled={!currentLessonId}>
+                <NoteAltOutlinedIcon />
+              </IconButton>
+            </span>
+          </Tooltip>
           <Tooltip title={sidebarOpen ? 'Kursinhalt ausblenden' : 'Kursinhalt anzeigen'}>
-            <IconButton onClick={() => setSidebarOpen(!sidebarOpen)}>
+            <IconButton size="small" onClick={() => setSidebarOpen(!sidebarOpen)}>
               <MenuBookIcon />
             </IconButton>
           </Tooltip>
@@ -553,9 +760,9 @@ export default function Learn() {
       </Box>
 
       {/* Main Layout: Content Links, Sidebar Rechts */}
-      <Stack direction="row" sx={{ minHeight: 'calc(100vh - 80px)' }}>
+      <Stack direction="row" sx={{ minHeight: 'calc(100vh - 48px)' }}>
         {/* Content Area (Links) */}
-        <Box sx={{ flex: 1, overflow: 'auto', height: 'calc(100vh - 80px)' }}>
+        <Box sx={{ flex: 1, overflow: 'auto', height: 'calc(100vh - 48px)' }}>
           {currentLesson ? (
             <Box sx={{ maxWidth: layoutMode === 'sideBySide' ? 1400 : 1000, mx: 'auto', p: { xs: 2, md: 4 } }}>
               <Box sx={{ mb: 3 }}>
@@ -1132,7 +1339,7 @@ export default function Learn() {
           }}
         >
           <Box sx={{ 
-            height: 'calc(100vh - 80px)', 
+            height: 'calc(100vh - 48px)', 
             overflow: 'auto',
             p: 2,
           }}>
@@ -1360,6 +1567,97 @@ export default function Learn() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Notes Drawer */}
+      <Drawer
+        anchor="right"
+        open={notesOpen}
+        onClose={() => setNotesOpen(false)}
+        sx={{ '& .MuiDrawer-paper': { width: { xs: '100%', sm: 400 }, p: 3, display: 'flex', flexDirection: 'column' } }}
+      >
+        <Stack direction="row" justifyContent="space-between" alignItems="center" mb={2}>
+          <Stack direction="row" spacing={1} alignItems="center">
+            <NoteAltOutlinedIcon color="primary" />
+            <Typography variant="h6" fontWeight={700}>Meine Notizen</Typography>
+          </Stack>
+          <IconButton size="small" onClick={() => setNotesOpen(false)}><CloseIcon /></IconButton>
+        </Stack>
+        <Typography variant="caption" color="text.secondary" sx={{ mb: 2, display: 'block' }}>
+          Notizen sind nur für dich sichtbar und werden pro Lektion gespeichert.
+        </Typography>
+        <Stack spacing={1} mb={3}>
+          <TextField
+            multiline
+            minRows={2}
+            maxRows={6}
+            placeholder="Neue Notiz schreiben…"
+            value={newNoteText}
+            onChange={(e) => setNewNoteText(e.target.value)}
+            fullWidth
+            size="small"
+            onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) handleAddNote(); }}
+          />
+          <Button
+            variant="contained"
+            size="small"
+            disabled={!newNoteText.trim() || savingNote}
+            onClick={handleAddNote}
+            sx={{ alignSelf: 'flex-end' }}
+          >
+            {savingNote ? <CircularProgress size={16} color="inherit" /> : 'Hinzufügen'}
+          </Button>
+        </Stack>
+        <Divider sx={{ mb: 2 }} />
+        {notesLoading ? (
+          <Stack alignItems="center" py={4}><CircularProgress size={28} /></Stack>
+        ) : notes.length === 0 ? (
+          <Typography variant="body2" color="text.secondary" textAlign="center" sx={{ mt: 4 }}>
+            Noch keine Notizen vorhanden.
+          </Typography>
+        ) : (
+          <Stack spacing={2} sx={{ overflowY: 'auto', flex: 1 }}>
+            {notes.map((note) => (
+              <Paper key={note.id} variant="outlined" sx={{ p: 2, borderRadius: 2 }}>
+                {editingNoteId === note.id ? (
+                  <Stack spacing={1}>
+                    <TextField
+                      multiline minRows={2} maxRows={8}
+                      value={editingNoteText}
+                      onChange={(e) => setEditingNoteText(e.target.value)}
+                      fullWidth size="small" autoFocus
+                    />
+                    <Stack direction="row" spacing={1} justifyContent="flex-end">
+                      <Button size="small" onClick={() => { setEditingNoteId(null); setEditingNoteText(''); }}>Abbrechen</Button>
+                      <Button size="small" variant="contained" disabled={savingNote || !editingNoteText.trim()} onClick={() => handleSaveEditNote(note.id)}>
+                        {savingNote ? <CircularProgress size={14} color="inherit" /> : 'Speichern'}
+                      </Button>
+                    </Stack>
+                  </Stack>
+                ) : (
+                  <>
+                    <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', mb: 1 }}>{note.text}</Typography>
+                    <Stack direction="row" justifyContent="space-between" alignItems="center">
+                      <Typography variant="caption" color="text.secondary">{formatNoteDate(note.updatedAt)}</Typography>
+                      <Stack direction="row" spacing={0.5}>
+                        <Tooltip title="Bearbeiten">
+                          <IconButton size="small" onClick={() => { setEditingNoteId(note.id); setEditingNoteText(note.text); }}>
+                            <EditOutlinedIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title="Löschen">
+                          <IconButton size="small" color="error" onClick={() => handleDeleteNote(note.id)}>
+                            <DeleteOutlineIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      </Stack>
+                    </Stack>
+                  </>
+                )}
+              </Paper>
+            ))}
+          </Stack>
+        )}
+      </Drawer>
     </Box>
   );
 }

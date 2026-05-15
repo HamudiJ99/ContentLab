@@ -176,8 +176,10 @@ const LessonEditor = () => {
   const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
   const [blockedNavigation, setBlockedNavigation] = useState<(() => void) | null>(null);
   const hasUnsavedChangesRef = useRef(false);
+  const isLoadingLessonRef = useRef(false);
   const [warningEnabled, setWarningEnabled] = useState(true);
   const [allNavLessons, setAllNavLessons] = useState<NavLesson[]>([]);
+
 
   // Sync ref with state
   useEffect(() => {
@@ -340,12 +342,16 @@ const LessonEditor = () => {
           setPdfUrl(loadedLesson.pdfUrl ?? null);
           setVideoUrl(loadedLesson.videoUrl ?? null);
           setAttachments(loadedLesson.attachments ?? []);
+          isLoadingLessonRef.current = true;
           setLessonForm({
             title: loadedLesson.title,
             shortDescription: loadedLesson.shortDescription,
             content: loadedLesson.content,
             status: loadedLesson.status,
           });
+          setHasUnsavedChanges(false);
+          // Allow one render cycle for RichTextEditor to sync, then unlock
+          setTimeout(() => { isLoadingLessonRef.current = false; }, 0);
         }
         setLessonLoading(false);
       },
@@ -1092,34 +1098,36 @@ const LessonEditor = () => {
           >
             Zurück zum Kurs
           </Button>
-          {allNavLessons.length > 1 && (
-            <Stack direction="row" spacing={0.5}>
-              <Tooltip title={prevNavLesson ? prevNavLesson.title : ''}>
-                <span>
-                  <IconButton
-                    size="small"
-                    disabled={!prevNavLesson}
-                    onClick={() => prevNavLesson && handleNavigateToLesson(prevNavLesson.chapterId, prevNavLesson.id)}
-                    sx={{ border: '1px solid', borderColor: 'divider' }}
-                  >
-                    <ArrowBackIcon fontSize="small" />
-                  </IconButton>
-                </span>
-              </Tooltip>
-              <Tooltip title={nextNavLesson ? nextNavLesson.title : ''}>
-                <span>
-                  <IconButton
-                    size="small"
-                    disabled={!nextNavLesson}
-                    onClick={() => nextNavLesson && handleNavigateToLesson(nextNavLesson.chapterId, nextNavLesson.id)}
-                    sx={{ border: '1px solid', borderColor: 'divider' }}
-                  >
-                    <ArrowForwardIcon fontSize="small" />
-                  </IconButton>
-                </span>
-              </Tooltip>
-            </Stack>
-          )}
+          <Stack direction="row" spacing={0.5} alignItems="center">
+            {allNavLessons.length > 1 && (
+              <>
+                <Tooltip title={prevNavLesson ? prevNavLesson.title : ''}>
+                  <span>
+                    <IconButton
+                      size="small"
+                      disabled={!prevNavLesson}
+                      onClick={() => prevNavLesson && handleNavigateToLesson(prevNavLesson.chapterId, prevNavLesson.id)}
+                      sx={{ border: '1px solid', borderColor: 'divider' }}
+                    >
+                      <ArrowBackIcon fontSize="small" />
+                    </IconButton>
+                  </span>
+                </Tooltip>
+                <Tooltip title={nextNavLesson ? nextNavLesson.title : ''}>
+                  <span>
+                    <IconButton
+                      size="small"
+                      disabled={!nextNavLesson}
+                      onClick={() => nextNavLesson && handleNavigateToLesson(nextNavLesson.chapterId, nextNavLesson.id)}
+                      sx={{ border: '1px solid', borderColor: 'divider' }}
+                    >
+                      <ArrowForwardIcon fontSize="small" />
+                    </IconButton>
+                  </span>
+                </Tooltip>
+              </>
+            )}
+          </Stack>
         </Stack>
       </Stack>
 
@@ -1636,7 +1644,7 @@ const LessonEditor = () => {
                 content={lessonForm.content}
                 onChange={(newContent) => {
                   setLessonForm((prev) => ({ ...prev, content: newContent }));
-                  setHasUnsavedChanges(true);
+                  if (!isLoadingLessonRef.current) setHasUnsavedChanges(true);
                 }}
                 placeholder={isPdfLesson || isVideoLesson ? 'Optionaler Text, der unter dem Inhalt angezeigt wird ...' : 'Schreibe hier den ausführlichen Lektionstext ...'}
                 minHeight={isPdfLesson || isVideoLesson ? 200 : 400}
