@@ -101,6 +101,7 @@ type Lesson = {
   content?: string;
   pdfUrl?: string;
   videoUrl?: string;
+  videoDuration?: number;
   parentLessonId?: string;
   attachments?: Attachment[];
 };
@@ -237,6 +238,7 @@ export default function Learn() {
               content: doc.data().content,
               pdfUrl: doc.data().pdfUrl,
               videoUrl: doc.data().videoUrl,
+              videoDuration: typeof doc.data().videoDuration === 'number' ? doc.data().videoDuration : undefined,
               status: doc.data().status,
               parentLessonId: doc.data().parentLessonId,
               attachments: Array.isArray(doc.data().attachments) ? doc.data().attachments : [],
@@ -1347,7 +1349,7 @@ export default function Learn() {
               Kursinhalt • {chapters.length} Kapitel
             </Typography>
             
-            {chapters.map((chapter) => {
+            {chapters.map((chapter, chapterIndex) => {
               const chapterLessons = lessonsByChapter[chapter.id] || [];
               const standaloneLessons = chapterLessons.filter(l => !l.parentLessonId && l.type !== 'subchapter');
               const subchapters = chapterLessons.filter(l => l.type === 'subchapter');
@@ -1388,9 +1390,14 @@ export default function Learn() {
                         ) : (
                           <RadioButtonUncheckedIcon sx={{ fontSize: 18 }} color="action" />
                         )}
-                        <Typography variant="body2" fontWeight={600} noWrap>
-                          {chapter.title}
-                        </Typography>
+                        <Box sx={{ minWidth: 0 }}>
+                          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', lineHeight: 1.2 }}>
+                            Abschnitt {chapterIndex + 1}
+                          </Typography>
+                          <Typography variant="body2" fontWeight={600} noWrap>
+                            {chapter.title}
+                          </Typography>
+                        </Box>
                       </Stack>
                       <Stack direction="row" spacing={1} alignItems="center" sx={{ pl: 3.5 }}>
                         <LinearProgress
@@ -1411,46 +1418,77 @@ export default function Learn() {
                   </AccordionSummary>
                   <AccordionDetails sx={{ p: 0 }}>
                     <List disablePadding dense>
-                      {standaloneLessons.map((lesson) => {
-                        const isCompleted = completedLessons.has(lesson.id);
-                        const isActive = currentLessonId === lesson.id;
+                      {(() => {
+                        // compute global lesson index offset for this chapter
+                        const chaptersBeforeThis = chapters.slice(0, chapterIndex);
+                        const lessonsBefore = chaptersBeforeThis.reduce((acc, ch) => {
+                          const cls = lessonsByChapter[ch.id] || [];
+                          return acc + cls.filter(l => l.type !== 'subchapter').length;
+                        }, 0);
+                        return standaloneLessons.map((lesson, lessonIdx) => {
+                          const isCompleted = completedLessons.has(lesson.id);
+                          const isActive = currentLessonId === lesson.id;
+                          const globalNumber = lessonsBefore + lessonIdx + 1;
+                          const formatDuration = (seconds: number) => {
+                            const m = Math.floor(seconds / 60);
+                            const s = seconds % 60;
+                            return `${m}:${String(s).padStart(2, '0')}`;
+                          };
 
-                        return (
-                          <ListItemButton
-                            key={lesson.id}
-                            selected={isActive}
-                            onClick={() => handleSelectLesson(lesson.id, chapter.id)}
-                            sx={{
-                              pl: 3,
-                              py: 1.5,
-                              borderLeft: isActive ? '3px solid' : '3px solid transparent',
-                              borderColor: 'primary.main',
-                              bgcolor: isActive ? alpha(theme.palette.primary.main, 0.08) : 'transparent',
-                              '&:hover': {
-                                bgcolor: alpha(theme.palette.primary.main, 0.05),
-                              },
-                            }}
-                          >
-                            <ListItemIcon sx={{ minWidth: 32 }}>
-                              {isCompleted ? (
-                                <CheckCircleIcon color="success" sx={{ fontSize: 18 }} />
-                              ) : (
-                                <Box sx={{ color: isActive ? 'primary.main' : 'text.secondary' }}>
-                                  {getLessonIcon(lesson.type)}
-                                </Box>
-                              )}
-                            </ListItemIcon>
-                            <ListItemText
-                              primary={lesson.title}
-                              primaryTypographyProps={{
-                                variant: 'body2',
-                                fontWeight: isActive ? 600 : 400,
-                                color: isActive ? 'primary.main' : 'text.primary',
+                          return (
+                            <ListItemButton
+                              key={lesson.id}
+                              selected={isActive}
+                              onClick={() => handleSelectLesson(lesson.id, chapter.id)}
+                              sx={{
+                                pl: 3,
+                                py: 1.5,
+                                borderLeft: isActive ? '3px solid' : '3px solid transparent',
+                                borderColor: 'primary.main',
+                                bgcolor: isActive ? alpha(theme.palette.primary.main, 0.08) : 'transparent',
+                                '&:hover': {
+                                  bgcolor: alpha(theme.palette.primary.main, 0.05),
+                                },
                               }}
-                            />
-                          </ListItemButton>
-                        );
-                      })}
+                            >
+                              <ListItemIcon sx={{ minWidth: 32 }}>
+                                {isCompleted ? (
+                                  <CheckCircleIcon color="success" sx={{ fontSize: 18 }} />
+                                ) : (
+                                  <Box sx={{ color: isActive ? 'primary.main' : 'text.secondary' }}>
+                                    {getLessonIcon(lesson.type)}
+                                  </Box>
+                                )}
+                              </ListItemIcon>
+                              <ListItemText
+                                primary={
+                                  <Box component="span" sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 0.5 }}>
+                                    <Typography
+                                      component="span"
+                                      variant="body2"
+                                      fontWeight={isActive ? 600 : 400}
+                                      color={isActive ? 'primary.main' : 'text.primary'}
+                                      sx={{ minWidth: 0, flex: 1 }}
+                                    >
+                                      {globalNumber}. {lesson.title}
+                                    </Typography>
+                                    {lesson.type === 'video' && lesson.videoDuration && lesson.videoDuration > 0 && (
+                                      <Typography
+                                        component="span"
+                                        variant="caption"
+                                        color="text.secondary"
+                                        sx={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                                      >
+                                        {formatDuration(lesson.videoDuration)}
+                                      </Typography>
+                                    )}
+                                  </Box>
+                                }
+                              />
+                            </ListItemButton>
+                          );
+                        });
+                      })()}
                       {subchapters.map((subchapter) => {
                         const subLessons = chapterLessons.filter(l => l.parentLessonId === subchapter.id);
                         const allSubCompleted = subLessons.every((lesson) => completedLessons.has(lesson.id));
@@ -1485,6 +1523,20 @@ export default function Learn() {
                             {isSubchapterExpanded && subLessons.map((lesson) => {
                               const isCompleted = completedLessons.has(lesson.id);
                               const isActive = currentLessonId === lesson.id;
+                              const subLessonGlobalIdx = (() => {
+                                const chaptersBeforeThis = chapters.slice(0, chapterIndex);
+                                const lessonsBefore = chaptersBeforeThis.reduce((acc, ch) => {
+                                  const cls = lessonsByChapter[ch.id] || [];
+                                  return acc + cls.filter(l => l.type !== 'subchapter').length;
+                                }, 0);
+                                const allNonSubInChapter = chapterLessons.filter(l => l.type !== 'subchapter');
+                                return lessonsBefore + allNonSubInChapter.findIndex(l => l.id === lesson.id) + 1;
+                              })();
+                              const formatDur = (seconds: number) => {
+                                const m = Math.floor(seconds / 60);
+                                const s = seconds % 60;
+                                return `${m}:${String(s).padStart(2, '0')}`;
+                              };
 
                               return (
                                 <ListItemButton
@@ -1509,12 +1561,29 @@ export default function Learn() {
                                     )}
                                   </ListItemIcon>
                                   <ListItemText
-                                    primary={lesson.title}
-                                    primaryTypographyProps={{
-                                      variant: 'body2',
-                                      fontWeight: isActive ? 600 : 400,
-                                      color: isActive ? 'primary.main' : 'text.primary',
-                                    }}
+                                    primary={
+                                      <Box component="span" sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 0.5 }}>
+                                        <Typography
+                                          component="span"
+                                          variant="body2"
+                                          fontWeight={isActive ? 600 : 400}
+                                          color={isActive ? 'primary.main' : 'text.primary'}
+                                          sx={{ minWidth: 0, flex: 1 }}
+                                        >
+                                          {subLessonGlobalIdx}. {lesson.title}
+                                        </Typography>
+                                        {lesson.type === 'video' && lesson.videoDuration && lesson.videoDuration > 0 && (
+                                          <Typography
+                                            component="span"
+                                            variant="caption"
+                                            color="text.secondary"
+                                            sx={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                                          >
+                                            {formatDur(lesson.videoDuration)}
+                                          </Typography>
+                                        )}
+                                      </Box>
+                                    }
                                   />
                                 </ListItemButton>
                               );

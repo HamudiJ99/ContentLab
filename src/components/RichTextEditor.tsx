@@ -64,7 +64,7 @@ export default function RichTextEditor({ content, onChange, minHeight = 300 }: R
   useEffect(() => {
     if (editor && content !== editor.getHTML()) {
       isProgrammaticUpdate.current = true;
-      editor.commands.setContent(content, false);
+      editor.commands.setContent(content, { emitUpdate: false });
       // reset after: if onUpdate fired synchronously above it already ran with the flag set;
       // if it didn't fire at all, we still need to clear so user edits aren't blocked.
       isProgrammaticUpdate.current = false;
