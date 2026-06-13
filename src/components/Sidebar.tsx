@@ -193,7 +193,7 @@ export default function Sidebar() {
                       })(),
                       '& .MuiListItemIcon-root': {
                         backgroundColor: alpha(theme.palette.primary.main, 0.5),
-                        color: '#fff',
+                        color: theme.palette.primary.contrastText,
                       },
                     },
                   })}
@@ -213,7 +213,7 @@ export default function Sidebar() {
                         ? '#e2e8f0'
                         : '#1e293b',
                       color: isActive
-                        ? '#ffffff'
+                        ? theme.palette.primary.contrastText
                         : theme.palette.mode === 'light'
                         ? '#475569'
                         : '#cbd5f5',

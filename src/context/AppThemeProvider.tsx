@@ -154,6 +154,20 @@ export default function AppThemeProvider({ children }: Props) {
       ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.1)` 
       : `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.3)`;
 
+    // Berechne relative Leuchtdichte (WCAG) um Textfarbe zu bestimmen
+    const getRelativeLuminance = (r: number, g: number, b: number) => {
+      const [rs, gs, bs] = [r, g, b].map((c) => {
+        const s = c / 255;
+        return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+      });
+      return 0.2126 * rs + 0.7152 * gs + 0.0722 * bs;
+    };
+    const luminance = getRelativeLuminance(rgb.r, rgb.g, rgb.b);
+    // Schwelle bei 0.179: darunter weißer Text, darüber dunkler Text
+    const contrastText = luminance > 0.179 ? '#111111' : '#ffffff';
+    // Für Outlined-Buttons: bei sehr hellen Farben dunklere Variante nutzen damit der Rand sichtbar bleibt
+    const outlinedColor = luminance > 0.5 ? primaryColorDark : primaryColor;
+
     return createTheme({
       palette: {
         mode,
@@ -161,7 +175,7 @@ export default function AppThemeProvider({ children }: Props) {
           main: primaryColor,
           dark: primaryColorDark,
           light: primaryColorLight,
-          contrastText: '#ffffff',
+          contrastText,
         },
         background: mode === 'light' ? lightBackground : darkBackground,
         divider: mode === 'light' ? 'rgba(15, 23, 42, 0.08)' : 'rgba(148, 163, 184, 0.2)',
@@ -181,22 +195,22 @@ export default function AppThemeProvider({ children }: Props) {
             },
             containedPrimary: {
               backgroundColor: primaryColor,
-              color: '#ffffff',
+              color: contrastText,
               '&:hover': {
                 backgroundColor: primaryColorDark,
               },
             },
             outlinedPrimary: {
-              borderColor: primaryColor,
-              color: primaryColor,
+              borderColor: outlinedColor,
+              color: outlinedColor,
               backgroundColor: mode === 'light' ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.04)` : `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.12)`,
               '&:hover': {
-                borderColor: primaryColor,
+                borderColor: outlinedColor,
                 backgroundColor: outlinedHoverColor,
               },
             },
             textPrimary: {
-              color: primaryColor,
+              color: outlinedColor,
             },
           },
         },
