@@ -3,8 +3,6 @@ import { useNavigate, useParams } from 'react-router-dom';
 import {
   Typography,
   Box,
-  Card,
-  CardContent,
   Button,
   Stack,
   LinearProgress,
@@ -24,10 +22,7 @@ import {
   IconButton,
   TextField,
   Tooltip,
-  Dialog,
-  DialogContent,
   useTheme,
-  Collapse,
 } from '@mui/material';
 import { darken, lighten, getLuminance } from '@mui/system';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
@@ -40,30 +35,18 @@ import FolderIcon from '@mui/icons-material/Folder';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
-import AttachFileIcon from '@mui/icons-material/AttachFile';
-import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
-import DescriptionIcon from '@mui/icons-material/Description';
-import TableChartIcon from '@mui/icons-material/TableChart';
-import SlideshowIcon from '@mui/icons-material/Slideshow';
-import ImageIcon from '@mui/icons-material/Image';
-import DownloadIcon from '@mui/icons-material/Download';
-import OpenInNewIcon from '@mui/icons-material/OpenInNew';
-import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import NoteAltOutlinedIcon from '@mui/icons-material/NoteAltOutlined';
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
-import FullscreenIcon from '@mui/icons-material/Fullscreen';
 import CloseIcon from '@mui/icons-material/Close';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import MenuBookIcon from '@mui/icons-material/MenuBook';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
-import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
-import ViewStreamIcon from '@mui/icons-material/ViewStream';
-import ViewSidebarIcon from '@mui/icons-material/ViewSidebar';
-import VideoLibraryIcon from '@mui/icons-material/VideoLibrary';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import { collection, getDocs, doc, getDoc, setDoc, serverTimestamp, updateDoc, deleteDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase/firebaseConfig';
+import LessonContentView from '../components/lessonBuilder/LessonContentView';
+import { resolveBlocks, type ContentBlock } from '../types/lessonContent';
 
 type Course = {
   id: string;
@@ -104,6 +87,7 @@ type Lesson = {
   videoDuration?: number;
   parentLessonId?: string;
   attachments?: Attachment[];
+  blocks?: ContentBlock[];
 };
 
 type FlatLesson = Lesson & {
@@ -133,10 +117,6 @@ export default function Learn() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [headerCollapsed, setHeaderCollapsed] = useState(false);
   const [descExpanded, setDescExpanded] = useState(false);
-  const [pdfFullscreen, setPdfFullscreen] = useState(false);
-  const [showAdditionalInfo, setShowAdditionalInfo] = useState(true);
-  const [showMedia, setShowMedia] = useState(true);
-  const [layoutMode, setLayoutMode] = useState<'stacked' | 'sideBySide'>('stacked');
   const [notesOpen, setNotesOpen] = useState(false);
   const [notes, setNotes] = useState<Note[]>([]);
   const [notesLoading, setNotesLoading] = useState(false);
@@ -242,6 +222,7 @@ export default function Learn() {
               status: doc.data().status,
               parentLessonId: doc.data().parentLessonId,
               attachments: Array.isArray(doc.data().attachments) ? doc.data().attachments : [],
+              blocks: resolveBlocks(doc.data()),
             }))
             .filter((lesson) => lesson.status === 'published')
             .sort((a, b) => a.position - b.position)
@@ -766,7 +747,7 @@ export default function Learn() {
         {/* Content Area (Links) */}
         <Box sx={{ flex: 1, overflow: 'auto', height: 'calc(100vh - 48px)' }}>
           {currentLesson ? (
-            <Box sx={{ maxWidth: layoutMode === 'sideBySide' ? 1400 : 1000, mx: 'auto', p: { xs: 2, md: 4 } }}>
+            <Box sx={{ maxWidth: 1000, mx: 'auto', p: { xs: 2, md: 4 } }}>
               <Box sx={{ mb: 3 }}>
                 <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
                   <Box>
@@ -782,450 +763,11 @@ export default function Learn() {
                       </Typography>
                     )}
                   </Box>
-                  {/* Layout Toggle für PDF/Video mit zusätzlichen Infos */}
-                  {(currentLesson.type === 'pdf' || currentLesson.type === 'video') && currentLesson.content && (
-                    <Tooltip title={layoutMode === 'stacked' ? 'Nebeneinander-Ansicht' : 'Untereinander-Ansicht'}>
-                      <IconButton 
-                        onClick={() => setLayoutMode(layoutMode === 'stacked' ? 'sideBySide' : 'stacked')}
-                        sx={{ 
-                          bgcolor: 'action.hover',
-                          '&:hover': { bgcolor: 'action.selected' },
-                        }}
-                      >
-                        {layoutMode === 'stacked' ? <ViewSidebarIcon /> : <ViewStreamIcon />}
-                      </IconButton>
-                    </Tooltip>
-                  )}
                 </Stack>
               </Box>
               
-              {currentLesson.type === 'text' && currentLesson.content ? (
-                <Card sx={{ mb: 3 }}>
-                  <CardContent sx={{ p: { xs: 2, md: 4 } }}>
-                    <Box
-                      sx={{
-                        '& p': { margin: '0.5em 0' },
-                        '& h1': { fontSize: '2em', fontWeight: 700, margin: '0.67em 0' },
-                        '& h2': { fontSize: '1.5em', fontWeight: 700, margin: '0.75em 0' },
-                        '& h3': { fontSize: '1.17em', fontWeight: 700, margin: '0.83em 0' },
-                        '& ul, & ol': { paddingLeft: '1.5em', margin: '0.5em 0' },
-                        '& blockquote': {
-                          borderLeft: '3px solid',
-                          borderColor: 'divider',
-                          paddingLeft: '1em',
-                          marginLeft: 0,
-                          fontStyle: 'italic',
-                          color: 'text.secondary',
-                        },
-                        '& code': {
-                          bgcolor: 'action.hover',
-                          padding: '0.2em 0.4em',
-                          borderRadius: '3px',
-                          fontFamily: 'monospace',
-                        },
-                        '& pre': {
-                          bgcolor: 'action.hover',
-                          padding: '1em',
-                          borderRadius: '4px',
-                          overflow: 'auto',
-                          '& code': {
-                            bgcolor: 'transparent',
-                            padding: 0,
-                          },
-                        },
-                      }}
-                      dangerouslySetInnerHTML={{ __html: currentLesson.content }}
-                    />
-                  </CardContent>
-                </Card>
-                ) : currentLesson.type === 'pdf' ? (
-                  <Box>
-                    {currentLesson.pdfUrl ? (
-                      <Stack 
-                        direction={layoutMode === 'sideBySide' && currentLesson.content ? { xs: 'column', lg: 'row' } : 'column'} 
-                        spacing={2}
-                        alignItems="flex-start"
-                      >
-                        {/* PDF Bereich */}
-                        <Box sx={{ flex: layoutMode === 'sideBySide' ? 1 : 'auto', width: '100%', minWidth: 0 }}>
-                          <Card>
-                            <Box 
-                              onClick={() => setShowMedia(!showMedia)}
-                              sx={{ 
-                                p: 2, 
-                                cursor: 'pointer',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'space-between',
-                                '&:hover': { bgcolor: 'action.hover' },
-                              }}
-                            >
-                              <Stack direction="row" spacing={1} alignItems="center">
-                                <PictureAsPdfIcon color="error" />
-                                <Typography variant="subtitle1" fontWeight={600}>
-                                  PDF-Dokument
-                                </Typography>
-                              </Stack>
-                              <Stack direction="row" spacing={1} alignItems="center">
-                                <Tooltip title="Vollbild">
-                                  <IconButton 
-                                    size="small" 
-                                    onClick={(e) => { e.stopPropagation(); setPdfFullscreen(true); }}
-                                  >
-                                    <FullscreenIcon fontSize="small" />
-                                  </IconButton>
-                                </Tooltip>
-                                {showMedia ? <ExpandLessIcon /> : <ExpandMoreIcon />}
-                              </Stack>
-                            </Box>
-                            <Collapse in={showMedia}>
-                              <Box
-                                sx={{
-                                  width: '100%',
-                                  height: layoutMode === 'sideBySide' ? { xs: 400, md: 500, lg: 600 } : { xs: 500, md: 700, lg: 800 },
-                                  borderTop: '1px solid',
-                                  borderColor: 'divider',
-                                  overflow: 'hidden',
-                                  bgcolor: 'background.default',
-                                }}
-                              >
-                                <iframe
-                                  src={currentLesson.pdfUrl}
-                                  style={{ width: '100%', height: '100%', border: 'none' }}
-                                  title={currentLesson.title}
-                                />
-                              </Box>
-                            </Collapse>
-                          </Card>
-                        </Box>
-                        
-                        {/* Zusätzliche Informationen */}
-                        {currentLesson.content && (
-                          <Box sx={{ 
-                            flex: layoutMode === 'sideBySide' ? 1 : 'auto', 
-                            width: '100%', 
-                            minWidth: 0,
-                            maxWidth: layoutMode === 'sideBySide' ? { lg: 400 } : 'none',
-                          }}>
-                            <Card>
-                              <Box 
-                                onClick={() => setShowAdditionalInfo(!showAdditionalInfo)}
-                                sx={{ 
-                                  p: 2, 
-                                  cursor: 'pointer',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'space-between',
-                                  '&:hover': { bgcolor: 'action.hover' },
-                                }}
-                              >
-                                <Stack direction="row" spacing={1} alignItems="center">
-                                  <InfoOutlinedIcon color="primary" />
-                                  <Typography variant="subtitle1" fontWeight={600}>
-                                    Zusätzliche Informationen
-                                  </Typography>
-                                </Stack>
-                                {showAdditionalInfo ? <ExpandLessIcon /> : <ExpandMoreIcon />}
-                              </Box>
-                              <Collapse in={showAdditionalInfo}>
-                                <CardContent sx={{ pt: 0, maxHeight: layoutMode === 'sideBySide' ? { lg: 550 } : 'none', overflow: 'auto' }}>
-                                  <Box
-                                    sx={{
-                                      '& p': { margin: '0.5em 0' },
-                                      '& h1': { fontSize: '2em', fontWeight: 700, margin: '0.67em 0' },
-                                      '& h2': { fontSize: '1.5em', fontWeight: 700, margin: '0.75em 0' },
-                                      '& h3': { fontSize: '1.17em', fontWeight: 700, margin: '0.83em 0' },
-                                      '& ul, & ol': { paddingLeft: '1.5em', margin: '0.5em 0' },
-                                      '& blockquote': {
-                                        borderLeft: '3px solid',
-                                        borderColor: 'divider',
-                                        paddingLeft: '1em',
-                                        marginLeft: 0,
-                                        fontStyle: 'italic',
-                                        color: 'text.secondary',
-                                      },
-                                      '& code': {
-                                        bgcolor: 'action.hover',
-                                        padding: '0.2em 0.4em',
-                                        borderRadius: '3px',
-                                        fontFamily: 'monospace',
-                                      },
-                                      '& pre': {
-                                        bgcolor: 'action.hover',
-                                        padding: '1em',
-                                        borderRadius: '4px',
-                                        overflow: 'auto',
-                                        '& code': {
-                                          bgcolor: 'transparent',
-                                          padding: 0,
-                                        },
-                                      },
-                                      whiteSpace: 'pre-wrap',
-                                    }}
-                                    dangerouslySetInnerHTML={{ __html: currentLesson.content }}
-                                  />
-                                </CardContent>
-                              </Collapse>
-                            </Card>
-                          </Box>
-                        )}
-                      </Stack>
-                    ) : (
-                      <Alert severity="warning">
-                        PDF-Datei wurde noch nicht hochgeladen.
-                      </Alert>
-                    )}
-                  </Box>
-                ) : currentLesson.type === 'video' ? (
-                  <Box>
-                    {currentLesson.videoUrl ? (
-                      <>
-                        <Stack 
-                          direction={layoutMode === 'sideBySide' && currentLesson.content ? { xs: 'column', lg: 'row' } : 'column'} 
-                          spacing={2}
-                          alignItems="flex-start"
-                        >
-                          {/* Video Bereich */}
-                          <Box sx={{ flex: layoutMode === 'sideBySide' ? 1 : 'auto', width: '100%', minWidth: 0 }}>
-                            <Card>
-                              <Box 
-                                onClick={() => setShowMedia(!showMedia)}
-                                sx={{ 
-                                  p: 2, 
-                                  cursor: 'pointer',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'space-between',
-                                  '&:hover': { bgcolor: 'action.hover' },
-                                }}
-                              >
-                                <Stack direction="row" spacing={1} alignItems="center">
-                                  <VideoLibraryIcon color="primary" />
-                                  <Typography variant="subtitle1" fontWeight={600}>
-                                    Video
-                                  </Typography>
-                                </Stack>
-                                {showMedia ? <ExpandLessIcon /> : <ExpandMoreIcon />}
-                              </Box>
-                              <Collapse in={showMedia}>
-                                <Box
-                                  sx={{
-                                    width: '100%',
-                                    height: layoutMode === 'sideBySide' ? { xs: 300, md: 400, lg: 450 } : 500,
-                                    borderTop: '1px solid',
-                                    borderColor: 'divider',
-                                    overflow: 'hidden',
-                                    bgcolor: 'background.default',
-                                  }}
-                                >
-                                  <video
-                                    src={currentLesson.videoUrl}
-                                    controls
-                                    preload="auto"
-                                    style={{ width: '100%', height: '100%', objectFit: 'contain' }}
-                                  />
-                                </Box>
-                              </Collapse>
-                            </Card>
-                          </Box>
-                          
-                          {/* Zusätzliche Informationen */}
-                          {currentLesson.content && (
-                            <Box sx={{ 
-                              flex: layoutMode === 'sideBySide' ? 1 : 'auto', 
-                              width: '100%', 
-                              minWidth: 0,
-                              maxWidth: layoutMode === 'sideBySide' ? { lg: 400 } : 'none',
-                            }}>
-                              <Card>
-                                <Box 
-                                  onClick={() => setShowAdditionalInfo(!showAdditionalInfo)}
-                                  sx={{ 
-                                    p: 2, 
-                                    cursor: 'pointer',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'space-between',
-                                    '&:hover': { bgcolor: 'action.hover' },
-                                  }}
-                                >
-                                  <Stack direction="row" spacing={1} alignItems="center">
-                                    <InfoOutlinedIcon color="primary" />
-                                    <Typography variant="subtitle1" fontWeight={600}>
-                                      Zusätzliche Informationen
-                                    </Typography>
-                                  </Stack>
-                                  {showAdditionalInfo ? <ExpandLessIcon /> : <ExpandMoreIcon />}
-                                </Box>
-                                <Collapse in={showAdditionalInfo}>
-                                  <CardContent sx={{ pt: 0, maxHeight: layoutMode === 'sideBySide' ? { lg: 400 } : 'none', overflow: 'auto' }}>
-                                    <Box
-                                      sx={{
-                                        '& p': { margin: '0.5em 0' },
-                                        '& h1': { fontSize: '2em', fontWeight: 700, margin: '0.67em 0' },
-                                        '& h2': { fontSize: '1.5em', fontWeight: 700, margin: '0.75em 0' },
-                                        '& h3': { fontSize: '1.17em', fontWeight: 700, margin: '0.83em 0' },
-                                        '& ul, & ol': { paddingLeft: '1.5em', margin: '0.5em 0' },
-                                        '& blockquote': {
-                                          borderLeft: '3px solid',
-                                          borderColor: 'divider',
-                                          paddingLeft: '1em',
-                                          marginLeft: 0,
-                                          fontStyle: 'italic',
-                                          color: 'text.secondary',
-                                        },
-                                        '& code': {
-                                          bgcolor: 'action.hover',
-                                          padding: '0.2em 0.4em',
-                                          borderRadius: '3px',
-                                          fontFamily: 'monospace',
-                                        },
-                                        '& pre': {
-                                          bgcolor: 'action.hover',
-                                          padding: '1em',
-                                          borderRadius: '4px',
-                                          overflow: 'auto',
-                                          '& code': {
-                                            bgcolor: 'transparent',
-                                            padding: 0,
-                                          },
-                                        },
-                                        whiteSpace: 'pre-wrap',
-                                      }}
-                                      dangerouslySetInnerHTML={{ __html: currentLesson.content }}
-                                    />
-                                  </CardContent>
-                                </Collapse>
-                              </Card>
-                            </Box>
-                          )}
-                        </Stack>
-                        
-                        {/* Dateianhänge - immer unter beiden Bereichen */}
-                        {currentLesson.attachments && currentLesson.attachments.length > 0 && (
-                          <Box sx={{ mt: 3 }}>
-                            <Typography variant="h6" gutterBottom fontWeight={600}>
-                              <AttachFileIcon sx={{ mr: 1, verticalAlign: 'middle', fontSize: 22 }} />
-                              Zusätzliche Materialien
-                            </Typography>
-                            <Stack spacing={1.5}>
-                              {currentLesson.attachments.map((attachment) => {
-                                const getIcon = () => {
-                                  if (attachment.type.includes('pdf')) return <PictureAsPdfIcon sx={{ color: '#e53935' }} />;
-                                  if (attachment.type.includes('word') || attachment.type.includes('document')) return <DescriptionIcon sx={{ color: '#1976d2' }} />;
-                                  if (attachment.type.includes('sheet') || attachment.type.includes('excel')) return <TableChartIcon sx={{ color: '#2e7d32' }} />;
-                                  if (attachment.type.includes('presentation') || attachment.type.includes('powerpoint')) return <SlideshowIcon sx={{ color: '#ed6c02' }} />;
-                                  if (attachment.type.includes('image')) return <ImageIcon sx={{ color: '#9c27b0' }} />;
-                                  return <InsertDriveFileIcon sx={{ color: 'text.secondary' }} />;
-                                };
-                                const formatSize = (bytes: number) => {
-                                  if (bytes < 1024) return `${bytes} B`;
-                                  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-                                  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
-                                };
-                                return (
-                                  <Paper
-                                    key={attachment.id}
-                                    elevation={0}
-                                    sx={{
-                                      p: 2,
-                                      border: '1px solid',
-                                      borderColor: 'divider',
-                                      borderRadius: 2,
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      gap: 2,
-                                      transition: 'all 0.2s ease',
-                                      '&:hover': {
-                                        borderColor: 'primary.main',
-                                        bgcolor: (theme) => alpha(theme.palette.primary.main, 0.04),
-                                      },
-                                    }}
-                                  >
-                                    <Box sx={{ display: 'flex', alignItems: 'center', fontSize: 28 }}>
-                                      {getIcon()}
-                                    </Box>
-                                    <Box sx={{ flex: 1, minWidth: 0 }}>
-                                      <Typography 
-                                        variant="body2" 
-                                        fontWeight={600}
-                                        sx={{ 
-                                          overflow: 'hidden',
-                                          textOverflow: 'ellipsis',
-                                          whiteSpace: 'nowrap',
-                                        }}
-                                      >
-                                        {attachment.name}
-                                      </Typography>
-                                      <Typography variant="caption" color="text.secondary">
-                                        {formatSize(attachment.size)}
-                                      </Typography>
-                                    </Box>
-                                    <Stack direction="row" spacing={0.5}>
-                                      <Tooltip title="Öffnen">
-                                        <IconButton
-                                          size="small"
-                                          onClick={() => window.open(attachment.url, '_blank')}
-                                          sx={{ color: 'primary.main' }}
-                                        >
-                                          <OpenInNewIcon fontSize="small" />
-                                        </IconButton>
-                                      </Tooltip>
-                                      <Tooltip title="Herunterladen">
-                                        <IconButton
-                                          size="small"
-                                          component="a"
-                                          href={attachment.url}
-                                          download={attachment.name}
-                                          target="_blank"
-                                          sx={{ color: 'primary.main' }}
-                                        >
-                                          <DownloadIcon fontSize="small" />
-                                        </IconButton>
-                                      </Tooltip>
-                                    </Stack>
-                                  </Paper>
-                                );
-                              })}
-                            </Stack>
-                          </Box>
-                        )}
-                      </>
-                    ) : (
-                      <Alert severity="warning">
-                        Video-Datei wurde noch nicht hochgeladen.
-                      </Alert>
-                    )}
-                  </Box>
-                ) : (
-                  <Alert 
-                    severity="info"
-                    sx={{
-                      backgroundColor: (theme) => alpha(theme.palette.primary.main, 0.1),
-                      color: (theme) => {
-                        const lum = getLuminance(theme.palette.primary.main);
-                        if (theme.palette.mode === 'dark') {
-                          return lum < 0.3 ? lighten(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
-                        } else {
-                          return lum > 0.7 ? darken(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
-                        }
-                      },
-                      '& .MuiAlert-icon': {
-                        color: (theme) => {
-                          const lum = getLuminance(theme.palette.primary.main);
-                          if (theme.palette.mode === 'dark') {
-                            return lum < 0.3 ? lighten(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
-                          } else {
-                            return lum > 0.7 ? darken(theme.palette.primary.main, 0.5) : theme.palette.primary.main;
-                          }
-                        },
-                      },
-                    }}
-                  >
-                    Dieser Lektionstyp wird noch nicht unterstützt.
-                  </Alert>
-                )}
-                
+              <LessonContentView blocks={currentLesson.blocks ?? []} />
+
                 {/* Navigation Buttons */}
                 <Divider sx={{ my: 4 }} />
                 <Stack direction="row" spacing={2} justifyContent="space-between">
@@ -1599,43 +1141,6 @@ export default function Learn() {
           </Box>
         </Box>
       </Stack>
-
-      {/* PDF Vollbild Dialog */}
-      <Dialog
-        open={pdfFullscreen}
-        onClose={() => setPdfFullscreen(false)}
-        maxWidth={false}
-        fullScreen
-        sx={{ 
-          '& .MuiDialog-paper': { 
-            bgcolor: 'background.default',
-          },
-        }}
-      >
-        <DialogContent sx={{ p: 0, position: 'relative' }}>
-          <IconButton
-            onClick={() => setPdfFullscreen(false)}
-            sx={{
-              position: 'absolute',
-              top: 16,
-              right: 16,
-              zIndex: 1,
-              bgcolor: 'background.paper',
-              boxShadow: 2,
-              '&:hover': { bgcolor: 'background.paper' },
-            }}
-          >
-            <CloseIcon />
-          </IconButton>
-          {currentLesson?.pdfUrl && (
-            <iframe
-              src={currentLesson.pdfUrl}
-              style={{ width: '100%', height: '100%', border: 'none' }}
-              title={currentLesson.title}
-            />
-          )}
-        </DialogContent>
-      </Dialog>
 
       {/* Notes Drawer */}
       <Drawer

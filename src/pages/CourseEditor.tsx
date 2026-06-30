@@ -50,6 +50,7 @@ import CollectionsIcon from '@mui/icons-material/Collections';
 import PlayCircleOutlineIcon from '@mui/icons-material/PlayCircleOutline';
 import PictureAsPdfOutlinedIcon from '@mui/icons-material/PictureAsPdfOutlined';
 import ArticleOutlinedIcon from '@mui/icons-material/ArticleOutlined';
+import ViewAgendaOutlinedIcon from '@mui/icons-material/ViewAgendaOutlined';
 import FolderOpenOutlinedIcon from '@mui/icons-material/FolderOpenOutlined';
 import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
 import CheckBoxOutlineBlankIcon from '@mui/icons-material/CheckBoxOutlineBlank';
@@ -130,7 +131,9 @@ type Chapter = {
   position: number;
 };
 
-type LessonType = 'subchapter' | 'video' | 'pdf' | 'text';
+// 'lesson' = Baukasten-Lektion (Text/Video/PDF-Blöcke). Die alten Einzeltypen
+// (video/pdf/text) bleiben nur für die Anzeige bereits bestehender Lektionen erhalten.
+type LessonType = 'subchapter' | 'lesson' | 'video' | 'pdf' | 'text';
 
 type LessonStatus = ChapterStatus;
 
@@ -195,7 +198,7 @@ type LessonFormState = {
 
 const emptyLessonForm: LessonFormState = {
   title: '',
-  type: 'video',
+  type: 'lesson',
   parentLessonId: null,
 };
 
@@ -221,18 +224,19 @@ const coverColorOptions: Array<{ label: string; value: string; swatch?: string }
   { label: 'Schiefer', value: '#64748b' },
 ];
 
+// Beim Anlegen wählbar: nur Unterkapitel oder Lektion (Baukasten).
 const lessonTypeOptions: Array<{ value: LessonType; label: string; icon: ReactNode }> = [
+  { value: 'lesson', label: 'Lektion', icon: <ViewAgendaOutlinedIcon /> },
   { value: 'subchapter', label: 'Unterkapitel', icon: <FolderOpenOutlinedIcon /> },
-  { value: 'video', label: 'Video', icon: <PlayCircleOutlineIcon /> },
-  { value: 'pdf', label: 'PDF', icon: <PictureAsPdfOutlinedIcon /> },
-  { value: 'text', label: 'Text', icon: <ArticleOutlinedIcon /> },
 ];
 
 const lessonTypeConfig: Record<LessonType, { label: string; icon: ReactNode; color: string }> = {
   subchapter: { label: 'Unterkapitel', icon: <FolderOpenOutlinedIcon fontSize="small" />, color: '#2563eb' },
-  video: { label: 'Video', icon: <PlayCircleOutlineIcon fontSize="small" />, color: '#0ea5e9' },
-  pdf: { label: 'PDF', icon: <PictureAsPdfOutlinedIcon fontSize="small" />, color: '#ef4444' },
-  text: { label: 'Text', icon: <ArticleOutlinedIcon fontSize="small" />, color: '#a855f7' },
+  lesson: { label: 'Lektion', icon: <ViewAgendaOutlinedIcon fontSize="small" />, color: '#0ea5e9' },
+  // Legacy – nur Anzeige bestehender Lektionen:
+  video: { label: 'Lektion', icon: <PlayCircleOutlineIcon fontSize="small" />, color: '#0ea5e9' },
+  pdf: { label: 'Lektion', icon: <PictureAsPdfOutlinedIcon fontSize="small" />, color: '#0ea5e9' },
+  text: { label: 'Lektion', icon: <ArticleOutlinedIcon fontSize="small" />, color: '#0ea5e9' },
 };
 
 const CourseEditor = () => {
@@ -948,7 +952,7 @@ const CourseEditor = () => {
   const handleOpenLessonDialog = (chapterId: string, parentLessonId: string | null = null) => {
     ensureLessonsListener(chapterId);
     setLessonTargetChapterId(chapterId);
-    setLessonForm({ title: '', type: 'video', parentLessonId });
+    setLessonForm({ title: '', type: 'lesson', parentLessonId });
     setLessonDialogOpen(true);
   };
 
@@ -962,7 +966,7 @@ const CourseEditor = () => {
   };
 
   const handleLessonCardClick = (chapterId: string, lesson: Lesson) => {
-    if ((lesson.type !== 'text' && lesson.type !== 'pdf' && lesson.type !== 'video') || !courseId) {
+    if (lesson.type === 'subchapter' || !courseId) {
       return;
     }
     navigate(`/courses/${courseId}/chapters/${chapterId}/lessons/${lesson.id}`);
@@ -1048,12 +1052,8 @@ const CourseEditor = () => {
         status: 'published',
         shortDescription: '',
       };
-      if (lessonType === 'text') {
-        newLessonData.content = '';
-      }
-      if (lessonType === 'pdf') {
-        newLessonData.content = '';
-        newLessonData.pdfUrl = null;
+      if (lessonType === 'lesson') {
+        newLessonData.blocks = [];
       }
       await setDoc(lessonRef, newLessonData);
       if (lessonType !== 'subchapter') {
@@ -2400,6 +2400,29 @@ const CourseEditor = () => {
         onClose={handleCloseMenus}
         anchorOrigin={{ horizontal: 'right', vertical: 'bottom' }}
       >
+        {(() => {
+          const lesson = lessonActionsMenu.chapterId && lessonActionsMenu.lessonId
+            ? (lessonsByChapter[lessonActionsMenu.chapterId] || []).find(
+                (l) => l.id === lessonActionsMenu.lessonId,
+              )
+            : null;
+          // Bearbeiten nur für Lektionen, nicht für Unterkapitel
+          if (!lesson || lesson.type === 'subchapter') {
+            return null;
+          }
+          return (
+            <MenuItem
+              onClick={() => {
+                if (lessonActionsMenu.chapterId) {
+                  handleLessonCardClick(lessonActionsMenu.chapterId, lesson);
+                }
+                handleCloseMenus();
+              }}
+            >
+              Bearbeiten
+            </MenuItem>
+          );
+        })()}
         <MenuItem
           onClick={() => {
             if (lessonActionsMenu.chapterId && lessonActionsMenu.lessonId) {
@@ -2592,7 +2615,7 @@ const SortableLessonCard = ({
   const typeConfig = lessonTypeConfig[lesson.type] ?? lessonTypeConfig.text;
   const lessonStatus = (lesson.status as LessonStatus) ?? 'draft';
   const statusConfig = statusStyles[lessonStatus];
-  const isClickableLesson = lesson.type === 'text' || lesson.type === 'pdf' || lesson.type === 'video';
+  const isClickableLesson = lesson.type !== 'subchapter';
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: lesson.id,
     data: {

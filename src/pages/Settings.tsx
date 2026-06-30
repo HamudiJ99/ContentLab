@@ -21,6 +21,7 @@ import CheckIcon from '@mui/icons-material/Check';
 import NotificationsNoneIcon from '@mui/icons-material/NotificationsNone';
 import { auth, db } from '../firebase/firebaseConfig';
 import { doc, setDoc } from 'firebase/firestore';
+import { CONFIRM_DELETE_KEY } from '../utils/preferences';
 
 const PRESET_COLORS = [
   { name: 'Blau (Standard)', value: '#1D8BF1' },
@@ -52,6 +53,7 @@ export type NewsSettings = {
 export default function Settings() {
   const navigate = useNavigate();
   const [showUnsavedWarning, setShowUnsavedWarning] = useState(true);
+  const [confirmDelete, setConfirmDelete] = useState(true);
   const [brandColor, setBrandColor] = useState('#1D8BF1');
   const [customColor, setCustomColor] = useState('#1D8BF1');
   const [newsSettings, setNewsSettings] = useState<NewsSettings>(DEFAULT_NEWS_SETTINGS);
@@ -61,6 +63,7 @@ export default function Settings() {
     if (saved !== null) {
       setShowUnsavedWarning(saved === 'true');
     }
+    setConfirmDelete(localStorage.getItem(CONFIRM_DELETE_KEY) !== 'false');
     const savedColor = localStorage.getItem('brandColor');
     if (savedColor) {
       setBrandColor(savedColor);
@@ -76,6 +79,12 @@ export default function Settings() {
     const newValue = event.target.checked;
     setShowUnsavedWarning(newValue);
     localStorage.setItem('showUnsavedWarning', String(newValue));
+  };
+
+  const handleToggleConfirmDelete = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const newValue = event.target.checked;
+    setConfirmDelete(newValue);
+    localStorage.setItem(CONFIRM_DELETE_KEY, String(newValue));
   };
 
   const handleColorChange = async (color: string) => {
@@ -232,6 +241,27 @@ export default function Settings() {
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
                     Zeige eine Warnung an, wenn du eine Seite mit ungespeicherten Änderungen verlässt
+                  </Typography>
+                </Box>
+              }
+              sx={{ alignItems: 'flex-start', ml: 0 }}
+            />
+
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={confirmDelete}
+                  onChange={handleToggleConfirmDelete}
+                  color="primary"
+                />
+              }
+              label={
+                <Box>
+                  <Typography variant="body1" fontWeight={500}>
+                    Löschen bestätigen
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Frage vor dem Löschen von Lektionen und Inhaltsblöcken nach einer Bestätigung
                   </Typography>
                 </Box>
               }
